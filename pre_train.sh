@@ -1,0 +1,27 @@
+OUTPUT_DIR=output/model_v1_table_0.2_0.2_30000_1e-4_with_dist_cand_2
+CUDA_VISIBLE_DEVICES="3" python run_table_lm_finetuning.py \
+    --output_dir=$OUTPUT_DIR \
+    --model_type=table \
+    --model_name_or_path=bert-base-uncased \
+    --do_train \
+    --data_dir=data/wikisql_entity \
+    --evaluate_during_training \
+    --mlm \
+    --mlm_probability=0.2 \
+    --ent_mlm_probability=0.2 \
+    --per_gpu_train_batch_size=16 \
+    --per_gpu_eval_batch_size=16 \
+    --gradient_accumulation_steps=2 \
+    --learning_rate=1e-4 \
+    --num_train_epochs=80 \
+    --save_total_limit=10 \
+    --seed=1 \
+    --cache_dir=cache \
+    --overwrite_output_dir \
+    --max_entity_candidate=30000 \
+    --config_name=configs/table-base-config.json \
+    --save_steps=10000 \
+    --logging_steps=500 \
+    --use_cand \
+    --sample_distribution \
+    --exclusive_ent=2 > /dev/null 2>&1 &

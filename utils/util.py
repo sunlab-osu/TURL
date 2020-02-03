@@ -1,5 +1,6 @@
 import json
 import pandas as pd
+import numpy as np
 from pathlib import Path
 from itertools import repeat
 from collections import OrderedDict
@@ -57,10 +58,10 @@ def create_ent_embedding(data_dir, ent_vocab, origin_embed):
         origin_embed[ent_vocab[wiki_id]] = ent_embed[str(wiki_id)]
     return origin_embed
 
-RESERVED_ENT_VOCAB = {0:{'wiki_id':'[PAD]'},
-                        1:{'wiki_id':'[ENT_MASK]'},
-                        2:{'wiki_id':'[PG_ENT_MASK]'},
-                        3:{'wiki_id':'[CORE_ENT_MASK]'}
+RESERVED_ENT_VOCAB = {0:{'wiki_id':'[PAD]', 'wiki_title':'[PAD]', 'count': -1},
+                        1:{'wiki_id':'[ENT_MASK]','wiki_title':'[ENT_MASK]', 'count': -1},
+                        2:{'wiki_id':'[PG_ENT_MASK]','wiki_title':'[PG_ENT_MASK]', 'count': -1},
+                        3:{'wiki_id':'[CORE_ENT_MASK]','wiki_title':'[CORE_ENT_MASK]', 'count': -1}
                         }
 RESERVED_ENT_VOCAB_NUM = len(RESERVED_ENT_VOCAB)
 
@@ -80,7 +81,18 @@ def load_entity_vocab(data_dir, ignore_bad_title=True, min_ent_count=1):
                     'wiki_id': int(entity_id),
                     'wiki_title': entity_title,
                     'mid': entity_mid,
-                    'count': count
+                    'count': int(count)
                 }
     print('total number of entity: %d\nremove because of empty title: %d\nremove because count<%d: %d'%(len(entity_vocab),bad_title,min_ent_count,few_entity))
     return entity_vocab
+
+def generate_vocab_distribution(entity_vocab):
+    distribution = np.zeros(len(entity_vocab))
+    for i, item in entity_vocab.items():
+        if i in RESERVED_ENT_VOCAB:
+            distribution[i] = 2
+        else:
+            distribution[i] = int(item['count'])
+    distribution = np.log10(distribution)
+    distribution /= np.sum(distribution)
+    return distribution

@@ -24,7 +24,7 @@ import sys
 
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss, MSELoss, MultiLabelSoftMarginLoss, MultiMarginLoss
 import torch.nn.functional as F
 
 from model.transformers.modeling_utils import PreTrainedModel, prune_linear_layer
@@ -50,14 +50,18 @@ class TableEmbeddings(nn.Module):
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def load_pretrained(self, checkpoint):
+    def load_pretrained(self, checkpoint, is_bert=True):
         state_dict = self.state_dict()
-        state_dict['LayerNorm.weight'] = checkpoint['bert.embeddings.LayerNorm.weight']
-        state_dict['LayerNorm.bias'] = checkpoint['bert.embeddings.LayerNorm.bias']
-        state_dict['word_embeddings.weight'] = checkpoint['bert.embeddings.word_embeddings.weight']
-        state_dict['position_embeddings.weight'] = checkpoint['bert.embeddings.position_embeddings.weight']
-        new_type_size = state_dict['type_embeddings.weight'].shape[0]
-        state_dict['type_embeddings.weight'] = checkpoint['bert.embeddings.token_type_embeddings.weight'][0].repeat(new_type_size).view(new_type_size, -1)
+        if is_bert:
+            state_dict['LayerNorm.weight'] = checkpoint['bert.embeddings.LayerNorm.weight']
+            state_dict['LayerNorm.bias'] = checkpoint['bert.embeddings.LayerNorm.bias']
+            state_dict['word_embeddings.weight'] = checkpoint['bert.embeddings.word_embeddings.weight']
+            state_dict['position_embeddings.weight'] = checkpoint['bert.embeddings.position_embeddings.weight']
+            new_type_size = state_dict['type_embeddings.weight'].shape[0]
+            state_dict['type_embeddings.weight'] = checkpoint['bert.embeddings.token_type_embeddings.weight'][0].repeat(new_type_size).view(new_type_size, -1)
+        else:
+            for key in state_dict:
+                state_dict[key] = checkpoint['table.embeddings.'+key]
         self.load_state_dict(state_dict)
 
     def forward(self, input_tok, input_tok_type, input_tok_pos, input_ent, input_ent_type, ent_candidates, input_ent_pos = None):
@@ -188,11 +192,15 @@ class TableEncoderSimple(nn.Module):
         self.output_hidden_states = config.output_hidden_states
         self.layer = nn.ModuleList([TableLayerSimple(config) for _ in range(config.num_hidden_layers)])
 
-    def load_pretrained(self, checkpoint):
+    def load_pretrained(self, checkpoint, is_bert=True):
         state_dict = self.state_dict()
-        for x in state_dict:
-            state_dict[x] = checkpoint['bert.encoder.'+x]
-            print('load %s <- %s'%(x, 'bert.encoder.'+x))
+        if is_bert:
+            for x in state_dict:
+                state_dict[x] = checkpoint['bert.encoder.'+x]
+                print('load %s <- %s'%(x, 'bert.encoder.'+x))
+        else:
+            for x in state_dict:
+                state_dict[x] = checkpoint['table.encoder.'+x]
         self.load_state_dict(state_dict)
 
     def forward(self, tok_hidden_states, tok_attention_mask, ent_hidden_states, ent_attention_mask):
@@ -266,6 +274,22 @@ class TableMLMHead(nn.Module):
         ent_prediction_scores = self.ent_predictions(ent_sequence_output, ent_candidates, ent_candidates_embeddings)
         return tok_prediction_scores, ent_prediction_scores
 
+class TableCERHead(nn.Module):
+    def __init__(self, config):
+        super(TableCERHead, self).__init__()
+        self.ent_predictions = TableLMSubPredictionHead(config)
+
+    def load_pretrained(self, checkpoint):
+        state_dict = self.state_dict()
+        for x in state_dict:
+            state_dict[x] = checkpoint['cls.'+x]
+        self.load_state_dict(state_dict)
+    
+    def forward(self, ent_sequence_output, ent_candidates, ent_candidates_embeddings):
+        ent_sequence_output = ent_sequence_output[:,None,:]
+        ent_prediction_scores = self.ent_predictions(ent_sequence_output, ent_candidates, ent_candidates_embeddings)
+        return ent_prediction_scores
+
 class TableModel(BertPreTrainedModel):
     def __init__(self, config, is_simple=False):
         super(TableModel, self).__init__(config)
@@ -280,9 +304,9 @@ class TableModel(BertPreTrainedModel):
 
         self.init_weights()
 
-    def load_pretrained(self, checkpoint):
-        self.embeddings.load_pretrained(checkpoint)
-        self.encoder.load_pretrained(checkpoint)
+    def load_pretrained(self, checkpoint, is_bert=True):
+        self.embeddings.load_pretrained(checkpoint, is_bert=is_bert)
+        self.encoder.load_pretrained(checkpoint, is_bert=is_bert)
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -355,7 +379,7 @@ class TableMaskedLM(BertPreTrainedModel):
 
     def forward(self, input_tok, input_tok_type, input_tok_pos, input_tok_mask,
                 input_ent, input_ent_type, input_ent_pos, input_ent_mask, ent_candidates,
-                tok_masked_lm_labels, ent_masked_lm_labels):
+                tok_masked_lm_labels, ent_masked_lm_labels, exclusive_ent_mask=None):
         tok_outputs, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent, input_ent_type, input_ent_pos, input_ent_mask, ent_candidates)
 
         tok_sequence_output = tok_outputs[0]
@@ -371,15 +395,51 @@ class TableMaskedLM(BertPreTrainedModel):
         #    of predictions for masked words.
         # 2. If `lm_labels` is provided we are in a causal scenario where we
         #    try to predict the next token for each input in the decoder.
+        # pdb.set_trace()
         if tok_masked_lm_labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)  # -1 index = padding token
             tok_masked_lm_loss = loss_fct(tok_prediction_scores.view(-1, self.config.vocab_size), tok_masked_lm_labels.view(-1))
             tok_outputs = (tok_masked_lm_loss,) + tok_outputs
         if ent_masked_lm_labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)  # -1 index = padding token
+            if exclusive_ent_mask is not None:
+                ent_prediction_scores.scatter_add_(2, exclusive_ent_mask, (1.0 - (exclusive_ent_mask>=1000).float()) * -10000.0)
             ent_masked_lm_loss = loss_fct(ent_prediction_scores.view(-1, self.config.max_entity_candidate), ent_masked_lm_labels.view(-1))
             ent_outputs = (ent_masked_lm_loss,) + ent_outputs
         # pdb.set_trace()
         return tok_outputs, ent_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
+
+class TableCER(BertPreTrainedModel):
+    def __init__(self, config, is_simple=False):
+        super(TableCER, self).__init__(config)
+
+        self.table = TableModel(config, is_simple)
+        self.cls = TableCERHead(config)
+
+        self.loss_fct = MultiLabelSoftMarginLoss()
+
+        self.init_weights()
+
+    def load_pretrained(self, checkpoint):
+        self.table.load_pretrained(checkpoint,is_bert=False)
+        self.cls.load_pretrained(checkpoint)
+
+    def forward(self, input_tok, input_tok_type, input_tok_pos,
+                input_ent, input_ent_type, input_ent_pos, input_mask, ent_candidates,
+                seed_ent, target_ent):
+        _, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_mask, input_ent, input_ent_type, input_ent_pos, input_mask, ent_candidates)
+
+        ent_sequence_output = ent_outputs[0]
+        ent_prediction_scores = self.cls(ent_sequence_output[:,1,:], ent_candidates, ent_candidates_embeddings).squeeze()
+
+        # Add hidden states and attention if they are here
+        ent_outputs = (ent_prediction_scores,) + ent_outputs[2:]
+
+        # pdb.set_trace()
+        ent_prediction_scores.scatter_add_(1, seed_ent, torch.full_like(seed_ent, -10000.0, dtype=torch.float))
+        ent_CER_loss = self.loss_fct(ent_prediction_scores, target_ent)
+        ent_outputs = (ent_CER_loss,) + ent_outputs
+        # pdb.set_trace()
+        return ent_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
 
 

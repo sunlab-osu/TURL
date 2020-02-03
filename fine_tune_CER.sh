@@ -1,0 +1,26 @@
+OUTPUT_DIR=model_v1_table_0.2_0.2_30000_1e-4_with_dist_cand_2
+CUDA_VISIBLE_DEVICES="0" python run_table_CER_finetuning.py \
+    --output_dir=output/CER/$OUTPUT_DIR \
+    --model_name_or_path=output/$OUTPUT_DIR \
+    --model_type=CER \
+    --do_train \
+    --data_dir=data/wikisql_entity \
+    --evaluate_during_training \
+    --mlm \
+    --mlm_probability=0.2 \
+    --ent_mlm_probability=0.2 \
+    --per_gpu_train_batch_size=32 \
+    --per_gpu_eval_batch_size=32 \
+    --gradient_accumulation_steps=2 \
+    --learning_rate=5e-5 \
+    --num_train_epochs=80 \
+    --save_total_limit=10 \
+    --seed=1 \
+    --cache_dir=cache \
+    --overwrite_output_dir \
+    --max_entity_candidate=30000 \
+    --config_name=configs/table-base-config.json \
+    --save_steps=2500 \
+    --logging_steps=250 \
+    --use_cand \
+    --sample_distribution \

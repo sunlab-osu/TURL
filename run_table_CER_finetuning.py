@@ -102,7 +102,7 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = EntityTableLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, max_entity_candidate=args.max_entity_candidate, \
                                         mlm_probability=args.mlm_probability, ent_mlm_probability=args.ent_mlm_probability, is_train=True, \
-                                        sample_distribution=sample_distribution,use_cand=args.use_cand)
+                                        sample_distribution=sample_distribution,use_cand=args.use_cand,mode=1)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -148,60 +148,42 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
     tok_tr_loss, tok_logging_loss, ent_tr_loss, ent_logging_loss = 0.0, 0.0, 0.0, 0.0
-    # tok_tr_acc, tok_logging_acc, ent_tr_acc, ent_logging_acc = 0.0, 0.0, 0.0, 0.0
-    # tok_tr_mr, tok_logging_mr, ent_tr_mr, ent_logging_mr = 0.0, 0.0, 0.0, 0.0
-    # model.module.resize_token_embeddings(len(tokenizer))
+    core_ent_tr_map, core_ent_logging_map = 0.0, 0.0
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
-                input_ent, input_ent_type, input_ent_pos, input_ent_labels, input_ent_mask, candidate_entity_set, _, exclusive_ent_mask, core_entity_mask = batch
+            input_tok, input_tok_type, input_tok_pos, \
+                input_ent, input_ent_type, input_ent_pos, \
+                input_mask, candidate_entity_set, seed_ent, target_ent = batch
             input_tok = input_tok.to(args.device)
             input_tok_type = input_tok_type.to(args.device)
             input_tok_pos = input_tok_pos.to(args.device)
-            input_tok_mask = input_tok_mask.to(args.device)
-            input_tok_labels = input_tok_labels.to(args.device)
             input_ent = input_ent.to(args.device)
             input_ent_type = input_ent_type.to(args.device)
             input_ent_pos = input_ent_pos.to(args.device)
-            input_ent_mask = input_ent_mask.to(args.device)
-            input_ent_labels = input_ent_labels.to(args.device)
+            input_mask = input_mask.to(args.device)
             candidate_entity_set = candidate_entity_set.to(args.device)
-            core_entity_mask = core_entity_mask.to(args.device)
+            seed_ent = seed_ent.to(args.device)
+            target_ent = target_ent.to(args.device)
             model.train()
-            if args.exclusive_ent == 0: #no mask
-                exclusive_ent_mask = None
-            else:
-                exclusive_ent_mask = exclusive_ent_mask.to(args.device)
-                if args.exclusive_ent == 2: #mask only core entity
-                    exclusive_ent_mask += (~core_entity_mask[:,:,None]).long()*1000
             # pdb.set_trace()
-            tok_outputs, ent_outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,
-                            input_ent, input_ent_type, input_ent_pos, input_ent_mask, candidate_entity_set,
-                            input_tok_labels, input_ent_labels, exclusive_ent_mask)
-            tok_loss = tok_outputs[0]  # model outputs are always tuple in transformers (see doc)
+            ent_outputs = model(input_tok, input_tok_type, input_tok_pos,
+                            input_ent, input_ent_type, input_ent_pos, input_mask,
+                            candidate_entity_set, seed_ent, target_ent)
+            # model outputs are always tuple in transformers (see doc)
             ent_loss = ent_outputs[0]
 
-            tok_prediction_scores = tok_outputs[1]
             ent_prediction_scores = ent_outputs[1]
-            # tok_acc = accuracy(tok_prediction_scores.view(-1, config.vocab_size), input_tok_labels.view(-1),ignore_index=-1)
-            # tok_mr = mean_rank(tok_prediction_scores.view(-1, config.vocab_size), input_tok_labels.view(-1))
-            # ent_acc = accuracy(ent_prediction_scores.view(-1, config.max_entity_candidate), input_ent_labels.view(-1),ignore_index=-1)
-            # ent_mr = mean_rank(ent_prediction_scores.view(-1, config.max_entity_candidate), input_ent_labels.view(-1))
-
-            loss = tok_loss + ent_loss
+            core_ent_map = mean_average_precision(ent_prediction_scores, target_ent)
+            loss = ent_loss
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
-                tok_loss = tok_loss.mean()
-                ent_loss = ent_loss.mean()
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
-                tok_loss = tok_loss / args.gradient_accumulation_steps
-                ent_loss = ent_loss / args.gradient_accumulation_steps
 
             if args.fp16:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -210,12 +192,7 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
                 loss.backward()
 
             tr_loss += loss.item()
-            tok_tr_loss += tok_loss.item()
-            ent_tr_loss += ent_loss.item()
-            # tok_tr_acc += tok_acc
-            # ent_tr_acc += ent_acc
-            # tok_tr_mr += tok_mr
-            # ent_tr_mr += ent_mr
+            core_ent_tr_map += core_ent_map.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -234,19 +211,9 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
                             tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
                     tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
+                    tb_writer.add_scalar('core_ent_map', (core_ent_tr_map - core_ent_logging_map)/(args.gradient_accumulation_steps*args.logging_steps), global_step)
+                    core_ent_logging_map = core_ent_tr_map
                     logging_loss = tr_loss
-                    tb_writer.add_scalar('tok_loss', (tok_tr_loss - tok_logging_loss)/args.logging_steps, global_step)
-                    tok_logging_loss = tok_tr_loss
-                    # tb_writer.add_scalar('tok_acc', (tok_tr_acc - tok_logging_acc)/args.logging_steps, global_step)
-                    # tok_logging_acc = tok_tr_acc
-                    # tb_writer.add_scalar('tok_mr', (tok_tr_mr - tok_logging_mr)/args.logging_steps, global_step)
-                    # tok_logging_mr = tok_tr_mr
-                    tb_writer.add_scalar('ent_loss', (ent_tr_loss - ent_logging_loss)/args.logging_steps, global_step)
-                    ent_logging_loss = ent_tr_loss
-                    # tb_writer.add_scalar('ent_acc', (ent_tr_acc - ent_logging_acc)/args.logging_steps, global_step)
-                    # ent_logging_acc = ent_tr_acc
-                    # tb_writer.add_scalar('ent_mr', (ent_tr_mr - ent_logging_mr)/args.logging_steps, global_step)
-                    # ent_logging_mr = ent_tr_mr
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     checkpoint_prefix = 'checkpoint'
@@ -286,7 +253,7 @@ def evaluate(args, config, eval_dataset, model, prefix="",sample_distribution=No
     eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
     eval_dataloader = EntityTableLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, max_entity_candidate=args.max_entity_candidate, \
                                         mlm_probability=args.mlm_probability, ent_mlm_probability=args.ent_mlm_probability, is_train=False, \
-                                        sample_distribution=sample_distribution, use_cand=args.use_cand)
+                                        sample_distribution=sample_distribution, use_cand=args.use_cand,mode=1)
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -297,66 +264,42 @@ def evaluate(args, config, eval_dataset, model, prefix="",sample_distribution=No
     logger.info("  Num examples = %d", len(eval_dataset))
     logger.info("  Batch size = %d", args.eval_batch_size)
     eval_loss = 0.0
-    tok_eval_loss = 0.0
-    ent_eval_loss = 0.0
-    tok_eval_acc = 0.0
-    ent_eval_acc = 0.0
-    ent_eval_mr = 0.0
     core_ent_eval_map = 0.0
     nb_eval_steps = 0
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
-            input_ent, input_ent_type, input_ent_pos, input_ent_labels, input_ent_mask, candidate_entity_set, core_entity_set, _, _ = batch
+        input_tok, input_tok_type, input_tok_pos, \
+            input_ent, input_ent_type, input_ent_pos, \
+            input_mask, candidate_entity_set, seed_ent, target_ent = batch
         input_tok = input_tok.to(args.device)
         input_tok_type = input_tok_type.to(args.device)
         input_tok_pos = input_tok_pos.to(args.device)
-        input_tok_mask = input_tok_mask.to(args.device)
-        input_tok_labels = input_tok_labels.to(args.device)
         input_ent = input_ent.to(args.device)
         input_ent_type = input_ent_type.to(args.device)
         input_ent_pos = input_ent_pos.to(args.device)
-        input_ent_mask = input_ent_mask.to(args.device)
-        input_ent_labels = input_ent_labels.to(args.device)
+        input_mask = input_mask.to(args.device)
         candidate_entity_set = candidate_entity_set.to(args.device)
-        core_entity_set = core_entity_set.to(args.device)
+        seed_ent = seed_ent.to(args.device)
+        target_ent = target_ent.to(args.device)
+        # pdb.set_trace()
         with torch.no_grad():
-            tok_outputs, ent_outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,
-                            input_ent, input_ent_type, input_ent_pos, input_ent_mask, candidate_entity_set,
-                            input_tok_labels, input_ent_labels)
-            tok_loss = tok_outputs[0]  # model outputs are always tuple in transformers (see doc)
+            ent_outputs = model(input_tok, input_tok_type, input_tok_pos,
+                            input_ent, input_ent_type, input_ent_pos, input_mask,
+                            candidate_entity_set, seed_ent, target_ent)
             ent_loss = ent_outputs[0]
-            tok_prediction_scores = tok_outputs[1]
             ent_prediction_scores = ent_outputs[1]
-            tok_acc = accuracy(tok_prediction_scores.view(-1, config.vocab_size), input_tok_labels.view(-1),ignore_index=-1)
-            ent_acc = accuracy(ent_prediction_scores.view(-1, config.max_entity_candidate), input_ent_labels.view(-1),ignore_index=-1)
-            ent_mr = mean_rank(ent_prediction_scores.view(-1, config.max_entity_candidate), input_ent_labels.view(-1))
-            core_ent_map = mean_average_precision(ent_prediction_scores[:,1,:], core_entity_set)
-            loss = tok_loss + ent_loss
+            core_ent_map = mean_average_precision(ent_prediction_scores, target_ent)
+            loss = ent_loss
             eval_loss += loss.mean().item()
-            tok_eval_loss += tok_loss.mean().item()
-            ent_eval_loss += ent_loss.mean().item()
-            tok_eval_acc += tok_acc.item()
-            ent_eval_acc += ent_acc.item()
-            ent_eval_mr += ent_mr.item()
             core_ent_eval_map += core_ent_map.item()
         nb_eval_steps += 1
 
     eval_loss = eval_loss / nb_eval_steps
-    tok_eval_loss = tok_eval_loss / nb_eval_steps
-    ent_eval_loss = ent_eval_loss / nb_eval_steps
-    tok_eval_acc = tok_eval_acc / nb_eval_steps
-    ent_eval_acc = ent_eval_acc / nb_eval_steps
-    ent_eval_mr = ent_eval_mr / nb_eval_steps
     core_ent_eval_map = core_ent_eval_map/ nb_eval_steps
 
     result = {
-        "tok_eval_loss": tok_eval_loss,
-        "tok_eval_acc": tok_eval_acc,
-        "ent_eval_loss": ent_eval_loss,
-        "ent_eval_acc": ent_eval_acc,
-        "ent_eval_mr": ent_eval_mr,
+        "eval_loss": eval_loss,
         "core_ent_eval_map": core_ent_eval_map
     }
 
@@ -668,12 +611,10 @@ def main():
     
     model = model_class(config, is_simple=True)
     if args.do_train:
-        lm_model_dir = "data/pre-trained_models/tiny-bert/2nd_General_TinyBERT_4L_312D"
-        lm_checkpoint = torch.load(lm_model_dir+"/pytorch_model.bin")
+        lm_checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.model_name_or_path + '/**/' + WEIGHTS_NAME, recursive=True)))
+        logger.info("load pre-trained model from %s", lm_checkpoints[-1])
+        lm_checkpoint = torch.load(os.path.join(lm_checkpoints[-1],"pytorch_model.bin"))
         model.load_pretrained(lm_checkpoint)
-        origin_ent_embeddings = model.table.embeddings.ent_embeddings.weight.data.numpy()
-        new_ent_embeddings = create_ent_embedding(args.data_dir, entity_wikid2id, origin_ent_embeddings)
-        model.table.embeddings.ent_embeddings.weight.data = torch.FloatTensor(new_ent_embeddings)
         model.to(args.device)
 
     if args.local_rank == 0:
@@ -686,8 +627,8 @@ def main():
         if args.local_rank not in [-1, 0]:
             torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training process the dataset, and the others will use the cache
         
-        train_dataset = WikiEntityTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None)
-        eval_dataset = WikiEntityTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="dev", max_length = [50, 10, 10], force_new=False, tokenizer = None)
+        train_dataset = WikiEntityTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1)
+        eval_dataset = WikiEntityTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="dev", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1)
 
         assert config.vocab_size == len(train_dataset.tokenizer) and config.ent_vocab_size == len(train_dataset.entity_wikid2id), \
             "vocab size mismatch, vocab_size=%d, ent_vocab_size=%d"%(len(train_dataset.tokenizer), len(train_dataset.entity_wikid2id))
