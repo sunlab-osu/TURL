@@ -15,6 +15,7 @@ from tqdm import tqdm
 import numpy as np
 import os
 import pickle
+from metric import mean_average_precision
 
 class P_e_e(Row_evaluation):
     def __init__(self, type_index_name="wikipedia_category",table_index_name="table_index_wikitable_train_jan_13",abstract_index_name="dbpedia_2015_10_abstract", lamda=0.5):
@@ -52,10 +53,10 @@ class P_e_e(Row_evaluation):
         # pdb.set_trace()
         cand_e = self.find_core_candidates_e(seed_E=seed, num=num)
         cand_c = self.find_core_candidates_c(seed_E=seed, c=c, num=num)
-        cand = cand_e | cand_c# + list(self.find_candidates_cat(seed_E=seed))
+        cand = cand_e | cand_c
         cand = list(cand)
         p_all = {}
-        pee = self.estimate_pee(cand, seed, cache=self.e_t)
+        pee = self.estimate_pee_fast(cand, seed)
         pce = self.estimate_pce_nokb_fast(cand, c)
         ple = self.estimate_ple_fast(cand, l)
         # pdb.set_trace()
@@ -63,24 +64,18 @@ class P_e_e(Row_evaluation):
             p_all[entity] = max(0.000001, score) * max(0.000001, pce.get(entity)) * max(0.000001, ple.get(entity))
         return p_all, pee, pce, ple, cand_e, cand_c
 
-    def estimate_pee(self, cand, seed, cache={}):
+    def estimate_pee_fast(self, cand, seed):
         """Estimate P(c|e_i+1) for candidates"""
         # pdb.set_trace()
         p_all = {}
-        body = self.generate_search_body_multi(seed)
-        n_e = self.__tes.estimate_number_complex(body)
+        n_e = self.get_tnum_contain_seed_fast(seed)
         for entity in cand:
-            try:
-                n_e_i = len(cache[entity])
-            except:
-                body = self.generate_search_body_multi([entity])
-                n_e_i = self.__tes.estimate_number_complex(body)  # number of tables containing e_i+1
+            n_e_i = self.get_tnum_contain_seed_fast(entity)  # number of tables containing e_i+1
             seed_e = []
             seed_e.append(entity)
             for en in seed:
                 seed_e.append(en)
-            body = self.generate_search_body_multi(seed_e)
-            n_e_e = self.__tes.estimate_number_complex(body)  # number of tables containing e_i+1 and E
+            n_e_e = self.get_tnum_contain_seed_fast(seed_e)  # number of tables containing e_i+1 and E
             sim = 0  # todo
             if n_e_i == 0:
                 p_all[entity] = 0
@@ -89,6 +84,17 @@ class P_e_e(Row_evaluation):
             else:
                 p_all[entity] = ((self.__lambda * (n_e_e / n_e) + (1 - self.__lambda) * sim))  # /n_e_i
         return p_all
+    
+    def get_tnum_contain_seed_fast(self, seed):
+        if not isinstance(seed, list):
+            return len(self.e_t.get(seed, []))
+        elif len(seed) == 1:
+            return len(self.e_t.get(seed[0],[]))
+        else:
+            current_set = set(self.e_t.get(seed[0],[]))
+            for entity in seed[1:]:
+                current_set = current_set & set(self.e_t.get(entity, []))
+            return len(current_set)
 
     def generate_search_body_multi(self, seed):
         """Generate and return search body"""
@@ -369,7 +375,7 @@ if __name__ == "__main__":
     eva = P_e_e()
     dev_result = {}
     data_dir = "./data"
-    entity_vocab = load_entity_vocab(data_dir, min_ent_count=2)
+    entity_vocab = load_entity_vocab(data_dir,True, min_ent_count=2)
     all_entity_set = set([item['wiki_id'] for _,item in entity_vocab.items()])
     tables_ignored = 0
     with open(os.path.join(data_dir,"dev_tables.jsonl"), 'r') as f:
@@ -410,16 +416,19 @@ if __name__ == "__main__":
             # B = eva.find_core_candidates_c(seed, re.escape(catcallall), k)
             # C = eva.find_core_candidates_e(seed, k)
             # pdb.set_trace()
-            ranked_entities, pee, pce, ple, cand_e, cand_c = eva.rank_core_candidates(seed, re.escape(caption), [re.escape(headers[0])], num=k)
+            pall, pee, pce, ple, cand_e, cand_c = eva.rank_core_candidates(seed, re.escape(caption), [re.escape(headers[0])], num=k)
+            target_entities = set(remained_core_entities[1:])
+            ranked_entities = [1 if z[0] in target_entities else 0 for z in sorted(pall.items(),key=lambda z:z[1],reverse=True)]
             # dev_result[table_id] = [set(seed), B, C, B|C]
-            dev_result[table_id] = [set(seed), set(remained_core_entities[1:]), ranked_entities, pee, pce, ple, cand_e, cand_c]
-    #         pdb.set_trace()
+            dev_result[table_id] = [set(seed), target_entities, ranked_entities, pall, pee, pce, ple, cand_e, cand_c]
+            # pdb.set_trace()
     # pdb.set_trace()
     # for i in range(3):
         # print(np.mean([len(x[0]&x[i+1])/len(x[0]) for _,x in dev_result.items()]), np.mean([len(x[i+1])for _,x in dev_result.items()]))
     print("tables ignored %d"%tables_ignored)
+    pdb.set_trace()
+    print("map: %f"%mean_average_precision([z[2] for _,z in dev_result.items()]))
     with open(os.path.join(data_dir, "dev_result.pkl"),"wb") as f:
         pickle.dump(dev_result, f)
-    pdb.set_trace()
     print("finish val")
         

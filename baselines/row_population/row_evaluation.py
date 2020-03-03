@@ -51,7 +51,7 @@ class Row_evaluation(object):
             doc = self.__tes.get_doc(table_id)
             labels = doc["_source"]["core_entity_n"]
             cand |= set(labels)
-        return cand
+        return cand-set(seed_E)
 
     def find_candidates_e(self, seed_E, num=100):
         """seed entities to find candidate entities"""
@@ -77,7 +77,7 @@ class Row_evaluation(object):
             doc = self.__tes.get_doc(table_id)
             labels = doc["_source"]["core_entity_n"]
             cand |= set(labels)
-        return cand# - set(seed_E)
+        return cand-set(seed_E)
 
     def generate_search_body(self, item, field):
         """Generate search body"""
