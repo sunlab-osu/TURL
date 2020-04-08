@@ -57,6 +57,6 @@ def average_precision(output, relevance_labels):
         cum_precision = cum_correct / torch.arange(start=1,end=cum_correct.shape[-1]+1, device=cum_correct.device)[None, :]
         cum_precision = cum_precision * sorted_labels
         total_valid = torch.sum(sorted_labels, dim=-1)
+        total_valid[total_valid==0] = 1
         average_precision = torch.sum(cum_precision, dim=-1)/total_valid
-
     return average_precision

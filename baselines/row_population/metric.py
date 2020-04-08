@@ -200,20 +200,3 @@ def ndcg_at_k(r, k, method=0):
         return 0.
     return dcg_at_k(r, k, method) / dcg_max
 
-
-from row_ranking_entities import load_entity_vocab
-
-if __name__ == "__main__":
-    data_dir = "./data"
-    entity_vocab = load_entity_vocab(data_dir, min_ent_count=2)
-    all_entity_set = set([item['wiki_id'] for _,item in entity_vocab.items()])
-    with open(os.path.join(data_dir, "dev_result.pkl"),"rb") as f:
-        dev_result = pickle.load(f)
-    pdb.set_trace()
-    ranked_results = []
-    for _,(seed, gt, ranked_entities, cand_e, cand_c) in dev_result.items():
-        ranked_entities = sorted(ranked_entities.items(), key=lambda x:x[1], reverse=True)
-        ranked_entities = [1 if e in gt else 0 for e,_ in ranked_entities if e in all_entity_set]
-        ranked_results.append(ranked_entities)
-    pdb.set_trace()
-    print(len(ranked_results))

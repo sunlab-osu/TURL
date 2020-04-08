@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from itertools import repeat
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import pickle
 import copy
 import os
@@ -58,10 +58,17 @@ def create_ent_embedding(data_dir, ent_vocab, origin_embed):
         origin_embed[ent_vocab[wiki_id]] = ent_embed[str(wiki_id)]
     return origin_embed
 
-RESERVED_ENT_VOCAB = {0:{'wiki_id':'[PAD]', 'wiki_title':'[PAD]', 'count': -1},
-                        1:{'wiki_id':'[ENT_MASK]','wiki_title':'[ENT_MASK]', 'count': -1},
-                        2:{'wiki_id':'[PG_ENT_MASK]','wiki_title':'[PG_ENT_MASK]', 'count': -1},
-                        3:{'wiki_id':'[CORE_ENT_MASK]','wiki_title':'[CORE_ENT_MASK]', 'count': -1}
+def create_header_embedding(data_dir, header_vocab, origin_embed, is_bert=False):
+    with open(os.path.join(data_dir, 'header_embedding_312_bert.pkl' if is_bert else 'header_embedding_312.pkl'), 'rb') as f:
+        header_embed = pickle.load(f)
+    for header_id in header_vocab:
+        origin_embed[header_id] = header_embed[header_vocab[header_id]]
+    return origin_embed
+
+RESERVED_ENT_VOCAB = {0:{'wiki_id':'[PAD]', 'wiki_title':'[PAD]', 'count': -1, 'mid': -1},
+                        1:{'wiki_id':'[ENT_MASK]','wiki_title':'[ENT_MASK]', 'count': -1, 'mid': -1},
+                        2:{'wiki_id':'[PG_ENT_MASK]','wiki_title':'[PG_ENT_MASK]', 'count': -1, 'mid': -1},
+                        3:{'wiki_id':'[CORE_ENT_MASK]','wiki_title':'[CORE_ENT_MASK]', 'count': -1, 'mid': -1}
                         }
 RESERVED_ENT_VOCAB_NUM = len(RESERVED_ENT_VOCAB)
 
@@ -96,3 +103,11 @@ def generate_vocab_distribution(entity_vocab):
     distribution = np.log10(distribution)
     distribution /= np.sum(distribution)
     return distribution
+
+def load_type_vocab(data_dir):
+    type_vocab = {}
+    with open(os.path.join(data_dir, "type_vocab.txt"), "r") as f:
+        for line in f:
+            index, t = line.strip().split('\t')
+            type_vocab[t] = int(index)
+    return type_vocab

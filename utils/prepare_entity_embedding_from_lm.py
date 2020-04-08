@@ -54,7 +54,7 @@ state_dict = model.state_dict()
 state_dict['word_embeddings.weight'] = bert_embeddings
 model.load_state_dict(state_dict)
 tokenizer = BertTokenizer.from_pretrained(model_dir)
-data_dir = '../data/wikisql_entity'
+data_dir = '../data/wikitables_v2'
 entity_vocab = load_entity_vocab(data_dir)
 i = 0
 batch_size = 1000

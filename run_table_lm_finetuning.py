@@ -157,7 +157,7 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
+            _,input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
                 input_ent, input_ent_type, input_ent_pos, input_ent_labels, input_ent_mask, candidate_entity_set, _, exclusive_ent_mask, core_entity_mask = batch
             input_tok = input_tok.to(args.device)
             input_tok_type = input_tok_type.to(args.device)
@@ -307,7 +307,7 @@ def evaluate(args, config, eval_dataset, model, prefix="",sample_distribution=No
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
+        _,input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
             input_ent, input_ent_type, input_ent_pos, input_ent_labels, input_ent_mask, candidate_entity_set, core_entity_set, _, _ = batch
         input_tok = input_tok.to(args.device)
         input_tok_type = input_tok_type.to(args.device)
@@ -404,7 +404,7 @@ def evaluate_analysis(args, config, eval_dataset, model, output_file, prefix="",
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
+        _,input_tok, input_tok_type, input_tok_pos, input_tok_labels, input_tok_mask, \
             input_ent, input_ent_type, input_ent_pos, input_ent_labels, input_ent_mask, candidate_entity_set, core_entity_set, _, _ = batch
         input_tok = input_tok.to(args.device)
         input_tok_type = input_tok_type.to(args.device)

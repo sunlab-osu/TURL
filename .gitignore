@@ -113,3 +113,4 @@ cache/
 .vscode/
 .idea/
 __MACOSX/
+core

@@ -19,7 +19,7 @@ class cell_filling(object):
             self.table_column2e = json.load(f)
         with open(os.path.join(data_dir, "n_h2h.pkl"),"rb") as f:
             self.n_h2h = pickle.load(f)
-        self.header_vectors = KeyedVectors.load(os.path.join(data_dir, "header_vectors.kv"), mmap='r')
+        # self.header_vectors = KeyedVectors.load(os.path.join(data_dir, "header_vectors.kv"), mmap='r')
 
     
     def get_cand_row(self, seed, h=None):
@@ -30,6 +30,12 @@ class cell_filling(object):
                     cands[e] = [set(),set()]
                 cands[e][0].add(c_name)
                 cands[e][1].add((t_id, c_id))
+                # if c_id != -1:
+                #     for e in self.table_column2e["{}-{}".format(t_id,c_id)]:
+                #         if e not in cands:
+                #             cands[e] = [set(),set()]
+                #         cands[e][0].add(c_name)
+                #         cands[e][1].add((t_id, c_id))
         return cands
 
     def rank_cand_h(self, h, cands):

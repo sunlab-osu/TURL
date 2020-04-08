@@ -11,7 +11,7 @@ def process_single_table(table, min_num=3):
     table_id = table.get("_id", "")
     pgTitle = table.get("pgTitle", "").lower()
     pgEnt = table.get("pgId", -1)
-    if pgEnt not in all_entity_set:
+    if pgEnt not in all_entities:
         pgEnt = -1
     secTitle = table.get("sectionTitle", "").lower()
     caption = table.get("tableCaption", "").lower()
@@ -23,13 +23,15 @@ def process_single_table(table, min_num=3):
     for i,j in zip(*entity_cells.nonzero()):
         if j == 0:
             e = rows[i][j]['surfaceLinks'][0]['target']['id']
-            if e in all_entity_set:
-                core_entities[i] = e
+            if e in all_entities:
+                e_text = rows[i][j]['text']
+                if e != -1:
+                    core_entities[i] = [e, e_text]
     
     for i,j in zip(*entity_cells.nonzero()):
         if j!=0 and i in core_entities:
             e = rows[i][j]['surfaceLinks'][0]['target']['id']
-            if e in all_entity_set:
+            if e in all_entities:
                 if j not in processed_data:
                     processed_data[j] = []
                 processed_data[j].append([core_entities[i], e])
@@ -62,9 +64,9 @@ def load_entity_vocab(data_dir, ignore_bad_title=True, min_ent_count=1):
     return entity_vocab
 
 if __name__ == "__main__":
-    data_dir = "./data"
+    data_dir = "./data/wikisql_entity"
     entity_vocab = load_entity_vocab(data_dir,True, min_ent_count=2)
-    all_entity_set = set([item['wiki_id'] for _,item in entity_vocab.items()])
+    all_entities = set([entity_vocab[x]['wiki_id'] for x in entity_vocab])
     generated_data = []
     with open(os.path.join(data_dir,"dev_tables.jsonl"), 'r') as f:
         for line in tqdm(f):

@@ -1,0 +1,21 @@
+OUTPUT_DIR=Bert/base
+CUDA_VISIBLE_DEVICES="0" python run_table_TR_finetuning.py \
+    --output_dir=output/TR/$OUTPUT_DIR \
+    --model_name_or_path="data/pre-trained_models/tiny-bert/2nd_General_TinyBERT_4L_312D" \
+    --model_type=TR_Bert \
+    --do_train \
+    --data_dir=data/WebQueryTable_Dataset \
+    --evaluate_during_training \
+    --per_gpu_train_batch_size=32 \
+    --per_gpu_eval_batch_size=32 \
+    --gradient_accumulation_steps=1 \
+    --learning_rate=5e-5 \
+    --num_train_epochs=80 \
+    --save_total_limit=10 \
+    --seed=1 \
+    --cache_dir=cache \
+    --overwrite_output_dir \
+    --config_name="data/pre-trained_models/tiny-bert/2nd_General_TinyBERT_4L_312D" \
+    --save_steps=250 \
+    --logging_steps=250 \
+    --neg_num=5
