@@ -42,20 +42,19 @@ except:
 
 from tqdm import tqdm, trange
 
-from data_loader.hybrid_data_loaders import *
+from data_loader.data_loaders import *
+from data_loader.EL_data_loaders import *
 from model.configuration import TableConfig
-from model.model import HybridTableCER
+from model.model import HybridTableEL
 from model.transformers import BertTokenizer, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 from model.optim import DenseSparseAdam
 from model.metric import *
 from utils.util import *
 
-import pdb
-
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
-    'CER': (TableConfig, HybridTableCER, BertTokenizer)
+    'EL': (TableConfig, HybridTableEL, BertTokenizer)
 }
 
 def set_seed(args):
@@ -95,15 +94,14 @@ def _rotate_checkpoints(args, checkpoint_prefix, use_mtime=False):
         shutil.rmtree(checkpoint)
 
 
-def train(args, config, train_dataset, model, eval_dataset = None, sample_distribution=None):
+def train(args, config, train_dataset, model, eval_dataset = None):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter(os.path.join(args.output_dir, 'logs'))
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = HybridTableLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, max_entity_candidate=args.max_entity_candidate, \
-                                        is_train=True, sample_distribution=sample_distribution,use_cand=args.use_cand,mode=1,seed_num=args.seed_num)
+    train_dataloader = ELLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, is_train=True)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -114,10 +112,14 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
-        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
-        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        {'params': [p for n, p in model.table.named_parameters() if (not any(nd in n for nd in no_decay))], 'weight_decay': args.weight_decay, 'lr': args.learning_rate},
+        {'params': [p for n, p in model.table.named_parameters() if (any(nd in n for nd in no_decay))], 'weight_decay': 0.0, 'lr': args.learning_rate},
+        {'params': [p for n, p in model.cand_embeddings.named_parameters() if (not 'word_embeddings' in n and not any(nd in n for nd in no_decay))], 'weight_decay': args.weight_decay, 'lr': args.learning_rate*10},
+        {'params': [p for n, p in model.cand_embeddings.named_parameters() if (not 'word_embeddings' in n and any(nd in n for nd in no_decay))], 'weight_decay': 0.0, 'lr': args.learning_rate*10},
+        {'params': [p for n, p in model.cls.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay, 'lr': args.learning_rate*10},
+        {'params': [p for n, p in model.cls.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': args.learning_rate*10}
         ]
-    optimizer = DenseSparseAdam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    optimizer = DenseSparseAdam(optimizer_grouped_parameters, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
     if args.fp16:
         try:
@@ -148,39 +150,50 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
-    tok_tr_loss, tok_logging_loss, ent_tr_loss, ent_logging_loss = 0.0, 0.0, 0.0, 0.0
-    core_ent_tr_map, core_ent_logging_map = 0.0, 0.0
+    tr_acc, logging_acc = 0.0, 0.0
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            _,input_tok, input_tok_type, input_tok_pos, \
-                input_ent, input_ent_text, input_ent_text_length, input_ent_type, \
-                input_mask, candidate_entity_set, seed_ent, target_ent = batch
+            table_id, input_tok, input_tok_type, input_tok_pos, input_tok_mask, \
+                input_ent_text, input_ent_text_length, input_ent_type, input_ent_mask, \
+                cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length, cand_mask, \
+                labels,_ = batch
             input_tok = input_tok.to(args.device)
             input_tok_type = input_tok_type.to(args.device)
             input_tok_pos = input_tok_pos.to(args.device)
-            input_ent = input_ent.to(args.device)
+            input_tok_mask = input_tok_mask.to(args.device)
             input_ent_text = input_ent_text.to(args.device)
             input_ent_text_length = input_ent_text_length.to(args.device)
             input_ent_type = input_ent_type.to(args.device)
-            input_mask = input_mask.to(args.device)
-            candidate_entity_set = candidate_entity_set.to(args.device)
-            seed_ent = seed_ent.to(args.device)
-            target_ent = target_ent.to(args.device)
+            input_ent_mask = input_ent_mask.to(args.device)
+            cand_name = cand_name.to(args.device)
+            cand_name_length = cand_name_length.to(args.device)
+            cand_description = cand_description.to(args.device)
+            cand_description_length = cand_description_length.to(args.device)
+            cand_type = cand_type.to(args.device)
+            cand_type_length = cand_type_length.to(args.device)
+            cand_mask = cand_mask.to(args.device)
+            labels = labels.to(args.device)
             model.train()
-            # pdb.set_trace()
-            ent_outputs = model(input_tok, input_tok_type, input_tok_pos, input_mask,
-                            input_ent, input_ent_text, input_ent_text_length, input_ent_type, input_mask,
-                            candidate_entity_set, seed_ent, target_ent)
+            if args.mode == 1:
+                cand_description = None
+                cand_description_length = None
+            elif args.mode == 2:
+                cand_type = None
+                cand_type_length = None
+            else:
+                raise Exception
+            outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
+                input_ent_text, input_ent_text_length, input_ent_type, input_ent_mask, \
+                cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length, cand_mask, \
+                labels)
             # model outputs are always tuple in transformers (see doc)
-            ent_loss = ent_outputs[0]
-
-            ent_prediction_scores = ent_outputs[1]
-            core_ent_map = mean_average_precision(ent_prediction_scores, target_ent)
-            loss = ent_loss
+            loss = outputs[0]
+            prediction_scores = outputs[1]
+            acc = accuracy(prediction_scores, labels.view(-1),ignore_index=-1)
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -194,7 +207,7 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
                 loss.backward()
 
             tr_loss += loss.item()
-            core_ent_tr_map += core_ent_map.item()
+            tr_acc += acc.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -208,13 +221,13 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
                 if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Log metrics
                     if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                        results = evaluate(args, config, eval_dataset, model, sample_distribution=sample_distribution)
+                        results = evaluate(args, config, eval_dataset, model)
                         for key, value in results.items():
                             tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
                     tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar('loss', (tr_loss - logging_loss)/args.logging_steps, global_step)
-                    tb_writer.add_scalar('core_ent_map', (core_ent_tr_map - core_ent_logging_map)/(args.gradient_accumulation_steps*args.logging_steps), global_step)
-                    core_ent_logging_map = core_ent_tr_map
+                    tb_writer.add_scalar('acc', (tr_acc - logging_acc)/(args.gradient_accumulation_steps*args.logging_steps), global_step)
+                    logging_acc = tr_acc
                     logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -243,137 +256,74 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, config, eval_dataset, model, prefix="",sample_distribution=None):
+def evaluate(args, config, eval_dataset, model, prefix=""):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_output_dir = args.output_dir
 
     if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(eval_output_dir)
-
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
-    # Note that DistributedSampler samples randomly
-    eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
-    eval_dataloader = HybridTableLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, max_entity_candidate=args.max_entity_candidate, \
-                                        is_train=False, sample_distribution=sample_distribution, use_cand=args.use_cand,mode=1,seed_num=args.seed_num)
-
     # multi-gpu evaluate
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
+    model.eval()
+    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+        # Note that DistributedSampler samples randomly
+    eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
+    eval_dataloader = ELLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, is_train=False)
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
     logger.info("  Num examples = %d", len(eval_dataset))
     logger.info("  Batch size = %d", args.eval_batch_size)
     eval_loss = 0.0
-    core_ent_eval_map = 0.0
+    eval_acc = 0.0
     nb_eval_steps = 0
-    model.eval()
-
+    
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        _,input_tok, input_tok_type, input_tok_pos, \
-            input_ent, input_ent_text, input_ent_text_length, input_ent_type, \
-            input_mask, candidate_entity_set, seed_ent, target_ent = batch
+        table_id, input_tok, input_tok_type, input_tok_pos, input_tok_mask, \
+                input_ent_text, input_ent_text_length, input_ent_type, input_ent_mask, \
+                cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length, cand_mask, \
+                labels,_ = batch
         input_tok = input_tok.to(args.device)
         input_tok_type = input_tok_type.to(args.device)
         input_tok_pos = input_tok_pos.to(args.device)
-        input_ent = input_ent.to(args.device)
+        input_tok_mask = input_tok_mask.to(args.device)
         input_ent_text = input_ent_text.to(args.device)
         input_ent_text_length = input_ent_text_length.to(args.device)
         input_ent_type = input_ent_type.to(args.device)
-        input_mask = input_mask.to(args.device)
-        candidate_entity_set = candidate_entity_set.to(args.device)
-        seed_ent = seed_ent.to(args.device)
-        target_ent = target_ent.to(args.device)
-        # pdb.set_trace()
+        input_ent_mask = input_ent_mask.to(args.device)
+        cand_name = cand_name.to(args.device)
+        cand_name_length = cand_name_length.to(args.device)
+        cand_description = cand_description.to(args.device)
+        cand_description_length = cand_description_length.to(args.device)
+        cand_type = cand_type.to(args.device)
+        cand_type_length = cand_type_length.to(args.device)
+        cand_mask = cand_mask.to(args.device)
+        labels = labels.to(args.device)
         with torch.no_grad():
-            ent_outputs = model(input_tok, input_tok_type, input_tok_pos, input_mask,
-                            input_ent, input_ent_text, input_ent_text_length, input_ent_type, input_mask,
-                            candidate_entity_set, seed_ent, target_ent)
-            ent_loss = ent_outputs[0]
-            ent_prediction_scores = ent_outputs[1]
-            core_ent_map = mean_average_precision(ent_prediction_scores, target_ent)
-            loss = ent_loss
+            outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
+                input_ent_text, input_ent_text_length, input_ent_type, input_ent_mask, \
+                cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length, cand_mask, \
+                labels)
+            # model outputs are always tuple in transformers (see doc)
+            loss = outputs[0]
+            prediction_scores = outputs[1]
+            acc = accuracy(prediction_scores, labels.view(-1),ignore_index=-1)
             eval_loss += loss.mean().item()
-            core_ent_eval_map += core_ent_map.item()
+            eval_acc += acc.item()
         nb_eval_steps += 1
-
+        
     eval_loss = eval_loss / nb_eval_steps
-    core_ent_eval_map = core_ent_eval_map/ nb_eval_steps
+    eval_acc = eval_acc / nb_eval_steps
 
     result = {
         "eval_loss": eval_loss,
-        "core_ent_eval_map": core_ent_eval_map
+        "eval_acc": eval_acc,
     }
-
-    output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
-    with open(output_eval_file, "w") as writer:
-        logger.info("***** Eval results {} *****".format(prefix))
-        for key in sorted(result.keys()):
-            logger.info("  %s = %s", key, str(result[key]))
-            writer.write("%s = %s\n" % (key, str(result[key])))
-
+    logger.info("***** Eval results {} *****".format(prefix))
+    for key in sorted(result.keys()):
+        logger.info("  %s = %s", key, str(result[key]))
     return result
-
-def get_table_repr(args, config, datasets, model, sample_distribution=None):
-    """ get table representation for evaluation """
-
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    for src, dataset in datasets.items():
-        train_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-        train_dataloader = HybridTableLoader(dataset, sampler=train_sampler, batch_size=args.train_batch_size, max_entity_candidate=args.max_entity_candidate, \
-                                            mlm_probability=args.mlm_probability, ent_mlm_probability=args.ent_mlm_probability, is_train=True, \
-                                            sample_distribution=sample_distribution,use_cand=args.use_cand,mode=1,seed_num=0)
-        
-
-        # multi-gpu evaluate
-        if args.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
-
-        # Eval!
-        logger.info("***** get training table representations *****")
-        logger.info("  Num examples = %d", len(dataset))
-        logger.info("  Batch size = %d", args.train_batch_size)
-        model.eval()
-
-        for seed in [0]:
-            table_reprs = {}
-            train_dataloader.collate_fn.seed = seed
-            j = 0
-            for batch in tqdm(train_dataloader, desc="get table representations"):
-                table_ids,input_tok, input_tok_type, input_tok_pos, \
-                    input_ent, input_ent_text, input_ent_text_length, input_ent_type, \
-                    input_mask, candidate_entity_set, seed_ent, target_ent = batch
-                
-                input_tok = input_tok.to(args.device)
-                input_tok_type = input_tok_type.to(args.device)
-                input_tok_pos = input_tok_pos.to(args.device)
-                input_ent_text = input_ent_text.to(args.device)
-                input_ent_text_length = input_ent_text_length.to(args.device)
-                input_ent = input_ent.to(args.device)
-                input_ent_type = input_ent_type.to(args.device)
-                input_mask = input_mask.to(args.device)
-                candidate_entity_set = None
-                seed_ent = None
-                target_ent = None
-                # pdb.set_trace()
-                with torch.no_grad():
-                    # pdb.set_trace()
-                    tok_outputs,ent_outputs = model(input_tok, input_tok_type, input_tok_pos, input_mask,
-                                    input_ent, input_ent_text, input_ent_text_length, input_ent_type, input_mask,
-                                    candidate_entity_set, seed_ent, target_ent, return_tok=True)
-                    tok_mask = (input_tok!=0)[:,:,None]
-                    tok_repr = (tok_outputs[0]*tok_mask).sum(1)/tok_mask.sum([1])
-                    ent_repr = ent_outputs[0][:,1,:]
-                for i, table_id in enumerate(table_ids):
-                    # if table_id not in table_reprs:
-                    #     table_reprs[table_id] = []
-                    # table_reprs[table_id].append(ent_repr[i].tolist())
-                    if i>tok_repr.shape[0]:
-                        pdb.set_trace()
-                    table_reprs[table_id] = [tok_repr[i].tolist(),ent_repr[i].tolist()]
-                j += 1
-            with open(os.path.join(args.model_name_or_path,"{}_table_repr_ent_{}.pickle".format(src,seed)),'wb') as f:
-                pickle.dump(table_reprs, f)
 
 
 
@@ -391,24 +341,8 @@ def main():
                         help="The model architecture to be fine-tuned.")
     parser.add_argument("--model_name_or_path", default="bert-base-cased", type=str,
                         help="The model checkpoint for weights initialization.")
-
-    parser.add_argument("--mlm", action='store_true',
-                        help="Train with masked-language modeling loss instead of language modeling.")
-    parser.add_argument("--mlm_probability", type=float, default=0.15,
-                        help="Ratio of tokens to mask for masked language modeling loss")
-    parser.add_argument("--ent_mlm_probability", type=float, default=0.15,
-                        help="Ratio of entities to mask for masked language modeling loss")
-    parser.add_argument("--max_entity_candidate", type=int, default=1000,
-                        help="num of entity candidate used in training")
-    parser.add_argument("--sample_distribution", action='store_true',
-                        help="generate candidate from distribution.")
-    parser.add_argument("--use_cand", action='store_true',
-                        help="Train with collected candidates.")
-    parser.add_argument("--exclusive_ent", type=int, default=0,
-                        help="whether to mask ent in the same column")
-    parser.add_argument('--seed_num', type=int, default=1,
-                        help="random seed for initialization")
-
+    parser.add_argument("--mode", default=0, type=int,
+                        help="0: use both;1:without description;2:without type")
 
     parser.add_argument("--config_name", default="", type=str,
                         help="Optional pretrained config name or path if not the same as model_name_or_path")
@@ -424,8 +358,6 @@ def main():
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
-    parser.add_argument("--get_table_repr", action='store_true',
-                        help="get representation of training tables")
     parser.add_argument("--evaluate_during_training", action='store_true',
                         help="Run evaluation during training at each logging step.")
     parser.add_argument("--do_lower_case", action='store_true',
@@ -520,25 +452,9 @@ def main():
     config_class, model_class, _ = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           cache_dir=args.cache_dir if args.cache_dir else None)
-    # tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
-    #                                             do_lower_case=args.do_lower_case,
-    #                                             cache_dir=args.cache_dir if args.cache_dir else None)
-    # if args.block_size <= 0:
-    #     args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
-    # args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
-    # model = model_class.from_pretrained(args.model_name_or_path,
-    #                                     from_tf=bool('.ckpt' in args.model_name_or_path),
-    #                                     config=config,
-    #                                     cache_dir=args.cache_dir if args.cache_dir else None)
-    config.__dict__['max_entity_candidate'] = args.max_entity_candidate
-
-    entity_vocab = load_entity_vocab(args.data_dir, ignore_bad_title=True, min_ent_count=2)
-    if args.sample_distribution:
-        sample_distribution = generate_vocab_distribution(entity_vocab)
-    else:
-        sample_distribution = None
-    entity_wikid2id = {entity_vocab[x]['wiki_id']:x for x in entity_vocab}
-    
+    type_vocab = load_dbpedia_type_vocab(args.data_dir)
+    config.ent_type_vocab_size = len(type_vocab)
+    config.mode = args.mode
     model = model_class(config, is_simple=True)
     if args.do_train:
         # lm_checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.model_name_or_path + '/**/' + WEIGHTS_NAME, recursive=True)))
@@ -557,17 +473,15 @@ def main():
     if args.do_train:
         if args.local_rank not in [-1, 0]:
             torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training process the dataset, and the others will use the cache
-        
-        train_dataset = WikiHybridTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1)
-        eval_dataset = WikiHybridTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="dev", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1)
-
-        assert config.vocab_size == len(train_dataset.tokenizer) and config.ent_vocab_size == len(train_dataset.entity_wikid2id), \
-            "vocab size mismatch, vocab_size=%d, ent_vocab_size=%d"%(len(train_dataset.tokenizer), len(train_dataset.entity_wikid2id))
+        train_dataset = ELDataset(args.data_dir, type_vocab, max_input_tok=500, src="train", max_length = [50, 10, 10, 100], force_new=False, tokenizer = None)
+        eval_dataset = ELDataset(args.data_dir, type_vocab, max_input_tok=500, src="dev", max_length = [50, 10, 10, 100], force_new=False, tokenizer = None)
+        assert config.vocab_size == len(train_dataset.tokenizer), \
+            "vocab size mismatch, vocab_size=%d"%(len(train_dataset.tokenizer))
 
         if args.local_rank == 0:
             torch.distributed.barrier()
 
-        global_step, tr_loss = train(args, config, train_dataset, model, eval_dataset=eval_dataset, sample_distribution=sample_distribution)
+        global_step, tr_loss = train(args, config, train_dataset, model, eval_dataset=eval_dataset)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
 
@@ -608,18 +522,6 @@ def main():
             result = evaluate(args, config, eval_dataset, model, prefix=prefix)
             result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
             results.update(result)
-
-    if args.get_table_repr:
-        datasets = {
-            'train': WikiHybridTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1),
-            'val': WikiHybridTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="dev", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1),
-            'test': WikiHybridTableDataset(args.data_dir,entity_vocab,max_cell=100, max_input_tok=350, max_input_ent=150, src="test", max_length = [50, 10, 10], force_new=False, tokenizer = None, mode=1),
-        }
-        
-        lm_checkpoint = torch.load(os.path.join(args.model_name_or_path,"pytorch_model.bin"))
-        model.load_pretrained(lm_checkpoint)
-        model.to(args.device)
-        get_table_repr(args, config, datasets, model)
 
 
     return results

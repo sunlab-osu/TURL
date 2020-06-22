@@ -104,7 +104,7 @@ def train(args, config, train_dataset, model, eval_dataset = None, sample_distri
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = HybridTableLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, max_entity_candidate=args.max_entity_candidate,num_workers=0, \
                                         mlm_probability=args.mlm_probability, ent_mlm_probability=args.ent_mlm_probability, mall_probability=args.mall_probability, is_train=True, \
-                                        sample_distribution=sample_distribution,use_cand=args.use_cand,random_sample=args.random_sample)
+                                        sample_distribution=sample_distribution,use_cand=args.use_cand,random_sample=args.random_sample,use_visibility=False if args.no_visibility else True)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -298,7 +298,7 @@ def evaluate(args, config, eval_dataset, model, prefix="",sample_distribution=No
     eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
     eval_dataloader = HybridTableLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, max_entity_candidate=args.max_entity_candidate,num_workers=0, \
                                         mlm_probability=args.mlm_probability, ent_mlm_probability=args.ent_mlm_probability, is_train=False, \
-                                        sample_distribution=sample_distribution, use_cand=True,random_sample=False)
+                                        sample_distribution=sample_distribution, use_cand=True,random_sample=False,use_visibility=False if args.no_visibility else True)
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -554,6 +554,8 @@ def main():
                         help="Train with collected candidates.")
     parser.add_argument("--random_sample", action='store_true',
                         help="random sample candidates.")
+    parser.add_argument("--no_visibility", action='store_true',
+                        help="no visibility matrix.")
     parser.add_argument("--exclusive_ent", type=int, default=0,
                         help="whether to mask ent in the same column")
 

@@ -409,14 +409,14 @@ class BertPooler(nn.Module):
 
 
 class BertPredictionHeadTransform(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, output_dim=None):
         super(BertPredictionHeadTransform, self).__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size if output_dim is None else output_dim)
         if isinstance(config.hidden_act, str) or (sys.version_info[0] == 2 and isinstance(config.hidden_act, unicode)):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = BertLayerNorm(config.hidden_size if output_dim is None else output_dim, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -998,8 +998,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        # self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
-        self.classifier = nn.Linear(config.hidden_size, 1)
+        self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
 
         self.init_weights()
 

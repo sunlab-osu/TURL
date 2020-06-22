@@ -1,5 +1,5 @@
-OUTPUT_DIR=output/hybrid/v2/model_v1_table_0.2_0.6_0.7_10000_1e-4_candnew_0_adam
-CUDA_VISIBLE_DEVICES="2" python run_hybrid_table_lm_finetuning.py \
+OUTPUT_DIR=output/hybrid/v2/model_v1_table_0.2_0.6_0.7_10000_1e-4_candnew_0_adam_no_visibility_test
+CUDA_VISIBLE_DEVICES="1" python run_hybrid_table_lm_finetuning.py \
     --output_dir=$OUTPUT_DIR \
     --model_type=hybrid \
     --model_name_or_path=bert-base-uncased \
@@ -25,5 +25,6 @@ CUDA_VISIBLE_DEVICES="2" python run_hybrid_table_lm_finetuning.py \
     --logging_steps=1000 \
     --use_cand \
     --exclusive_ent=0 \
-    --random_sample > /dev/null 2>&1 &
+    --no_visibility \
+    --random_sample #> /dev/null 2>&1 &
     # --resume=output/hybrid/v2/model_v1_table_0.2_0.4_0.7_10000_1e-4_cand_0_adam/checkpoint-35000/pytorch_model.bin \

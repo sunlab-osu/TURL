@@ -19,7 +19,7 @@ class cell_filling(object):
             self.table_column2e = json.load(f)
         with open(os.path.join(data_dir, "n_h2h.pkl"),"rb") as f:
             self.n_h2h = pickle.load(f)
-        # self.header_vectors = KeyedVectors.load(os.path.join(data_dir, "header_vectors.kv"), mmap='r')
+        self.header_vectors = KeyedVectors.load(os.path.join(data_dir, "header_vectors.kv"), mmap='r')
 
     
     def get_cand_row(self, seed, h=None):
@@ -30,15 +30,42 @@ class cell_filling(object):
                     cands[e] = [set(),set()]
                 cands[e][0].add(c_name)
                 cands[e][1].add((t_id, c_id))
-                # if c_id != -1:
-                #     for e in self.table_column2e["{}-{}".format(t_id,c_id)]:
-                #         if e not in cands:
-                #             cands[e] = [set(),set()]
-                #         cands[e][0].add(c_name)
-                #         cands[e][1].add((t_id, c_id))
+        return cands
+    
+    def get_cand_row_relax(self, seed, h=None):
+        cands = {}
+        for t_id,c_id,c_name,e in self.e2e_row.get(seed, []):
+            if e not in cands:
+                cands[e] = [set(),set()]
+            cands[e][0].add(c_name)
+            cands[e][1].add((t_id, c_id))
         return cands
 
-    def rank_cand_h(self, h, cands):
+    def rank_cand_exact(self, h, cands):
+        cand_h_scores = []
+        # h_seen = h in self.header_vectors.vocab
+        h_seen = h in self.n_h2h
+        for e in cands:
+            tmp = []
+            for z in cands[e][0]:
+                if z == h:
+                    tmp.append(10000)
+                else:
+                    tmp.append(-1)
+                # elif not h_seen:
+                #     tmp.append(-1)
+                # else:
+                #     try:
+                #         # tmp.append(self.header_vectors.similarity(h, z))
+                #         tmp.append(self.n_h2h[h][z])
+                #     except:
+                #         tmp.append(-1)
+            score = max(tmp)
+            cand_h_scores.append((e, score))
+        sorted_cands = sorted(cand_h_scores, key=lambda z:z[1], reverse=True)
+        return [z[0] for z in sorted_cands]
+    
+    def rank_cand_h2h(self, h, cands):
         cand_h_scores = []
         # h_seen = h in self.header_vectors.vocab
         h_seen = h in self.n_h2h
@@ -55,6 +82,30 @@ class cell_filling(object):
                     try:
                         # tmp.append(self.header_vectors.similarity(h, z))
                         tmp.append(self.n_h2h[h][z])
+                    except:
+                        tmp.append(-1)
+            score = max(tmp)
+            cand_h_scores.append((e, score))
+        sorted_cands = sorted(cand_h_scores, key=lambda z:z[1], reverse=True)
+        return [z[0] for z in sorted_cands]
+
+    def rank_cand_h2v(self, h, cands):
+        cand_h_scores = []
+        h_seen = h in self.header_vectors.vocab
+        # h_seen = h in self.n_h2h
+        for e in cands:
+            tmp = []
+            for z in cands[e][0]:
+                if z == h:
+                    tmp.append(10000)
+                # else:
+                #     tmp.append(-1)
+                elif not h_seen:
+                    tmp.append(-1)
+                else:
+                    try:
+                        tmp.append(self.header_vectors.similarity(h, z))
+                        # tmp.append(self.n_h2h[h][z])
                     except:
                         tmp.append(-1)
             score = max(tmp)

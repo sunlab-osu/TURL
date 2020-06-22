@@ -216,7 +216,7 @@ def process_single_hybrid_table(input_table, config):
                 np.array(core_entity_mask),core_ent_local_id,all_entity_set,entity_cand,exclusive_ent_mask]
 
 def process_single_hybrid_table_CER(input_table, config):
-    table_id,pgEnt,pgTitle,secTitle,caption,headers,core_entities,core_entities_text,all_entities,entities,entities_text,entity_cand = input_table
+    table_id,subject,pgEnt,pgTitle,secTitle,caption,headers,core_entities,core_entities_text,all_entities,entities,entities_text,entity_cand = input_table
     tokenized_pgTitle = config.tokenizer.encode(pgTitle, max_length=config.max_title_length, add_special_tokens=False)
     tokenized_meta = tokenized_pgTitle+\
                     config.tokenizer.encode(secTitle, max_length=config.max_title_length, add_special_tokens=False)
@@ -269,6 +269,10 @@ class WikiHybridTableDataset(Dataset):
             preprocessed_filename = os.path.join(
                 data_dir, "procressed_hybrid_CER", self.src
             )
+        elif self.mode == 2:
+            preprocessed_filename = os.path.join(
+                data_dir, "procressed_hybrid_all", self.src
+            )
         else:
             raise Exception
         preprocessed_filename += ".pickle"
@@ -281,8 +285,12 @@ class WikiHybridTableDataset(Dataset):
             try:
                 if self.mode == 0:
                     os.mkdir(os.path.join(data_dir, "procressed_hybrid"))
-                else:
+                elif self.mode == 1:
                     os.mkdir(os.path.join(data_dir, "procressed_hybrid_CER"))
+                elif self.mode == 2:
+                    os.mkdir(os.path.join(data_dir, "procressed_hybrid_all"))
+                else:
+                    raise Exception
             except FileExistsError:
                 pass
             origin_data = open(os.path.join(data_dir, self.src + "_tables.jsonl"), "r")
@@ -370,7 +378,7 @@ class WikiHybridTableDataset(Dataset):
                             if tmp_entity_num >= self.max_cell:
                                 split.append(len(entities))
                                 tmp_entity_num = 0
-                elif self.mode == 1:
+                elif self.mode == 1 or self.mode == 2:
                     for (index, entity), entity_text in zip(tmp_entities, tmp_entities_text):
                         entities.append([index, entity])
                         entities_text.append(entity_text)
@@ -384,9 +392,10 @@ class WikiHybridTableDataset(Dataset):
             if split[-1]!=len(entities):
                 split.append(len(entities))
             if len(core_entities) < 5:
-                if self.src!="train" or (self.mode == 1 and len(core_entities) < 3) or len(core_entities) == 0: 
-                    table_removed += 1
-                    continue
+                if self.mode!=2:
+                    if self.src!="train" or len(core_entities) == 0 or (self.mode == 1 and len(core_entities) < 3):
+                        table_removed += 1
+                        continue
             if split[-2]!=0 and split[-1]-split[-2]<5:
                 split[-2] = split[-1]
                 split = split[:-1]
@@ -413,7 +422,7 @@ class WikiHybridTableDataset(Dataset):
         pool = Pool(processes=4)
         if self.mode == 0:
             processed_data = list(tqdm(pool.imap(partial(process_single_hybrid_table,config=self), actual_tables, chunksize=2000),total=len(actual_tables)))
-        elif self.mode == 1:
+        elif self.mode == 1 or self.mode == 2:
             processed_data = list(tqdm(pool.imap(partial(process_single_hybrid_table_CER,config=self), actual_tables, chunksize=2000),total=len(actual_tables)))
         # elif self.mode == 2:
         else:
@@ -503,7 +512,7 @@ def mask_ent(inputs_origin, inputs_local_id, core_entity_mask, entity_wikid2id, 
 
     return inputs, input_ent_mask_type, labels
 class pretrain_hybrid_table_collate_fn:
-    def __init__(self, tokenizer, entity_wikid2id, mlm_probability, ent_mlm_probability, mall_probability=0.5, max_entity_candidate=1000, is_train=True, candidate_distribution=None, use_cand=True, random_sample=True):
+    def __init__(self, tokenizer, entity_wikid2id, mlm_probability, ent_mlm_probability, mall_probability=0.5, max_entity_candidate=1000, is_train=True, candidate_distribution=None, use_cand=True, random_sample=True, use_visibility=True):
         self.tokenizer = tokenizer
         self.entity_wikid2id = entity_wikid2id
         self.mlm_probability = mlm_probability
@@ -514,6 +523,7 @@ class pretrain_hybrid_table_collate_fn:
         self.candidate_distribution = candidate_distribution
         self.use_cand = use_cand
         self.random_sample = random_sample
+        self.use_visibility = use_visibility
 
     def generate_random_candidate(self, batch_size, indice_mask):
         random_shifts = np.random.random((batch_size, len(self.entity_wikid2id)))
@@ -581,15 +591,22 @@ class pretrain_hybrid_table_collate_fn:
             batch_input_tok_padded[i, :tok_l] = batch_input_tok[i]
             batch_input_tok_type_padded[i, :tok_l] = batch_input_tok_type[i]
             batch_input_tok_pos_padded[i, :tok_l] = batch_input_tok_pos[i]
-            batch_input_tok_mask_padded[i, :tok_l, :tok_l] = batch_input_tok_mask[i][0]
-            batch_input_tok_mask_padded[i, :tok_l, max_input_tok_length:max_input_tok_length+ent_l] = batch_input_tok_mask[i][1]
-
+            if self.use_visibility or not self.is_train:
+                batch_input_tok_mask_padded[i, :tok_l, :tok_l] = batch_input_tok_mask[i][0]
+                batch_input_tok_mask_padded[i, :tok_l, max_input_tok_length:max_input_tok_length+ent_l] = batch_input_tok_mask[i][1]
+            else:
+                batch_input_tok_mask_padded[i, :tok_l, :tok_l] = 1
+                batch_input_tok_mask_padded[i, :tok_l, max_input_tok_length:max_input_tok_length+ent_l] = 1
             batch_input_ent_padded[i, :ent_l] = batch_input_ent[i]
             batch_input_ent_text_padded[i, :ent_l, :batch_input_ent_text[i].shape[-1]] = batch_input_ent_text[i]
             batch_input_ent_text_length[i, :ent_l] = batch_input_ent_cell_length[i]
             batch_input_ent_type_padded[i, :ent_l] = batch_input_ent_type[i]
-            batch_input_ent_mask_padded[i, :ent_l, :tok_l] = batch_input_ent_mask[i][0]
-            batch_input_ent_mask_padded[i, :ent_l, max_input_tok_length:max_input_tok_length+ent_l] = batch_input_ent_mask[i][1]
+            if self.use_visibility or not self.is_train:
+                batch_input_ent_mask_padded[i, :ent_l, :tok_l] = batch_input_ent_mask[i][0]
+                batch_input_ent_mask_padded[i, :ent_l, max_input_tok_length:max_input_tok_length+ent_l] = batch_input_ent_mask[i][1]
+            else:
+                batch_input_ent_mask_padded[i, :ent_l, :tok_l] = 1
+                batch_input_ent_mask_padded[i, :ent_l, max_input_tok_length:max_input_tok_length+ent_l] = 1
             batch_core_entity_mask_padded[i, :ent_l] = batch_core_entity_mask[i]
             batch_input_ent_local_id_padded[i, :ent_l] = batch_input_ent_local_id[i]
             if self.is_train:
@@ -639,6 +656,7 @@ class pretrain_hybrid_table_collate_fn_CER(pretrain_hybrid_table_collate_fn):
         self.candidate_distribution = candidate_distribution
         self.use_cand = use_cand
         self.seed = seed_num
+        self.random_sample = random_sample
     def __call__(self, raw_batch):
         batch_table_id,batch_input_tok,batch_input_tok_type,batch_input_tok_pos,batch_input_tok_length, \
             batch_input_ent,batch_input_ent_text,batch_input_ent_cell_length,batch_input_ent_length,batch_input_ent_local_id,batch_core_entities, \
@@ -677,7 +695,7 @@ class pretrain_hybrid_table_collate_fn_CER(pretrain_hybrid_table_collate_fn):
             batch_input_ent_text_length[i, :ent_l] = batch_input_ent_cell_length[i]
             batch_input_ent_type_padded[i, 1:ent_l] = 3
 
-            if self.seed !=-1:
+            if self.seed >0:
                 tmp_cand_core = set(range(ent_l-2))
                 tmp_selected_core = random.sample(tmp_cand_core,self.seed)
                 batch_seed_ent.append(batch_input_ent_local_id[i][tmp_selected_core])
@@ -685,6 +703,10 @@ class pretrain_hybrid_table_collate_fn_CER(pretrain_hybrid_table_collate_fn):
                 # batch_target_ent[i,:len(tmp_cand_core)] = batch_input_ent_local_id[i][tmp_cand_core]
                 batch_target_ent[i,batch_input_ent_local_id[i][tmp_cand_core]] = 1
                 batch_input_ent_ent_mask_padded[i,2:][tmp_selected_core] = 1
+            elif self.seed == 0:
+                batch_input_ent_ent_mask_padded[i,2:ent_l] = 0
+                batch_seed_ent.append([])
+                batch_target_ent[i,batch_input_ent_local_id[i]] = 1
             else:
                 batch_input_ent_ent_mask_padded[i,2:ent_l] = 1
             batch_input_ent_ent_mask_padded[i,0] = batch_input_ent[i][0]!=0
@@ -830,11 +852,15 @@ def CF_build_input(pgEnt, pgTitle, secTitle, caption, headers, core_entities, co
     input_ent_cell_length = torch.LongTensor([input_ent_cell_length])
     input_ent_type = torch.LongTensor([input_ent_type])
 
+    input_ent_mask_type = torch.zeros_like(input_ent)
+    input_ent_mask_type[:,:,1+len(core_entities):] = config.entity_wikid2id['[ENT_MASK]']
+
     candidate_entity_set = [config.entity_wikid2id[entity] for entity in entity_cand]
     candidate_entity_set = torch.LongTensor([candidate_entity_set])
+    
 
     return input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
-            input_ent, input_ent_text, input_ent_cell_length, input_ent_type, input_ent_mask, candidate_entity_set
+            input_ent, input_ent_text, input_ent_cell_length, input_ent_type, input_ent_mask_type, input_ent_mask, candidate_entity_set
 
 
 class HybridTableLoader(DataLoader):
@@ -856,7 +882,9 @@ class HybridTableLoader(DataLoader):
         sampler=None,
         use_cand=True,
         mode=0,
-        random_sample = True
+        random_sample = True,
+        seed_num = 1,
+        use_visibility = True
     ):
         self.mlm_probability = mlm_probability
         self.ent_mlm_probability = ent_mlm_probability
@@ -874,9 +902,9 @@ class HybridTableLoader(DataLoader):
         self.sample_distribution = sample_distribution
         self.mode = mode
         if self.mode == 0:
-            self.collate_fn = pretrain_hybrid_table_collate_fn(dataset.tokenizer, dataset.entity_wikid2id, self.mlm_probability, self.ent_mlm_probability, self.mall_probability, self.max_entity_candidate, is_train=self.is_train, candidate_distribution=self.sample_distribution, use_cand=self.use_cand, random_sample=self.random_sample)
+            self.collate_fn = pretrain_hybrid_table_collate_fn(dataset.tokenizer, dataset.entity_wikid2id, self.mlm_probability, self.ent_mlm_probability, self.mall_probability, self.max_entity_candidate, is_train=self.is_train, candidate_distribution=self.sample_distribution, use_cand=self.use_cand, random_sample=self.random_sample, use_visibility=use_visibility)
         elif self.mode == 1:
-            self.collate_fn = pretrain_hybrid_table_collate_fn_CER(dataset.tokenizer, dataset.entity_wikid2id, self.max_entity_candidate, is_train=self.is_train, candidate_distribution=self.sample_distribution, use_cand=self.use_cand, random_sample=self.random_sample)
+            self.collate_fn = pretrain_hybrid_table_collate_fn_CER(dataset.tokenizer, dataset.entity_wikid2id, self.max_entity_candidate, is_train=self.is_train, candidate_distribution=self.sample_distribution, use_cand=self.use_cand, random_sample=self.random_sample, seed_num=seed_num)
         else:
             raise Exception
 

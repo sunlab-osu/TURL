@@ -36,10 +36,11 @@ class HeaderEmbeddings(nn.Module):
 
         return input_header_embeds
 
-data_dir = 'data/wikisql_entity'
+data_dir = 'data/wikitables_v2'
 header_vocab = load_header_vocab(data_dir)
 
 # model_dir = "output/hybrid/model_v1_table_0.2_0.4_0.7_30000_1e-4_with_cand_0"
+# model_dir = "output/hybrid/v2/model_v1_table_0.2_0.6_0.7_10000_1e-4_candnew_0_adam"
 model_dir ="data/pre-trained_models/tiny-bert/2nd_General_TinyBERT_4L_312D"
 lm_checkpoint = torch.load(model_dir+"/pytorch_model.bin")
 # word_embeddings = lm_checkpoint['table.embeddings.word_embeddings.weight']

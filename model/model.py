@@ -96,8 +96,8 @@ class TableHeaderEmbeddings(nn.Module):
     """
     def __init__(self, config):
         super(TableHeaderEmbeddings, self).__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
-        self.header_embeddings = nn.Embedding(config.header_vocab_size, config.hidden_size, padding_idx=0)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0,sparse=True)
+        self.header_embeddings = nn.Embedding(config.header_vocab_size, config.hidden_size, padding_idx=0,sparse=True)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
@@ -204,6 +204,8 @@ class TableHybridEmbeddings(nn.Module):
                 #     input_ent_embeds = self.ent_embeddings(input_ent.cpu()).cuda()
                 # else:
             input_ent_embeds = self.ent_embeddings(input_ent)
+            if input_ent_tok is None:
+                input_ent_tok_embeds = torch.zeros_like(input_ent_embeds)
         else:
             input_ent_embeds = torch.zeros_like(input_ent_tok_embeds)
         ent_embeddings = self.fusion(torch.cat([input_ent_embeds, input_ent_tok_embeds], dim=-1))
@@ -225,6 +227,59 @@ class TableHybridEmbeddings(nn.Module):
             ent_candidates_embeddings = None
 
         return tok_embeddings, ent_embeddings, ent_candidates_embeddings
+
+class TableELEmbeddings(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings.
+    """
+    def __init__(self, config):
+        super(TableELEmbeddings, self).__init__()
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0,sparse=True)
+        self.ent_type_embeddings = nn.Embedding(config.ent_type_vocab_size, config.hidden_size, padding_idx=0,sparse=True)
+
+        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def load_pretrained(self, checkpoint, is_bert=True):
+        state_dict = self.state_dict()
+        if is_bert:
+            state_dict['LayerNorm.weight'] = checkpoint['bert.embeddings.LayerNorm.weight']
+            state_dict['LayerNorm.bias'] = checkpoint['bert.embeddings.LayerNorm.bias']
+            state_dict['word_embeddings.weight'] = checkpoint['bert.embeddings.word_embeddings.weight']
+        else:
+            for key in state_dict:
+                if 'table.embeddings.'+key in checkpoint:
+                    state_dict[key] = checkpoint['table.embeddings.'+key]
+        self.load_state_dict(state_dict)
+
+    def forward(self, cand_name=None, cand_name_length=None, cand_description=None, cand_description_length=None, cand_type=None, cand_type_length=None):
+        cand_embeddings = []
+        if cand_name is not None:
+            cand_name_embeds = self.word_embeddings(cand_name)
+            cand_name_embeds = cand_name_embeds.sum(dim=-2)
+            cand_name_embeds = cand_name_embeds/cand_name_length[:,:,None]
+            cand_name_embeds = self.LayerNorm(cand_name_embeds)
+            cand_name_embeds = self.dropout(cand_name_embeds)
+            cand_embeddings.append(cand_name_embeds)
+
+        if cand_description is not None:
+            cand_description_embeds = self.word_embeddings(cand_description)
+            cand_description_embeds = cand_description_embeds.sum(dim=-2)
+            cand_description_embeds = cand_description_embeds/cand_description_length[:,:,None]
+            cand_description_embeds = self.LayerNorm(cand_description_embeds)
+            cand_description_embeds = self.dropout(cand_description_embeds)
+            cand_embeddings.append(cand_description_embeds)
+
+        if cand_type is not None:
+            cand_type_embeds = self.ent_type_embeddings(cand_type)
+            cand_type_embeds = cand_type_embeds.sum(dim=-2)
+            cand_type_embeds = cand_type_embeds/cand_type_length[:,:,None]
+            cand_type_embeds = self.LayerNorm(cand_type_embeds)
+            cand_type_embeds = self.dropout(cand_type_embeds)
+            cand_embeddings.append(cand_type_embeds)
+
+        cand_embeddings = torch.cat(cand_embeddings, dim=-1)
+
+        return cand_embeddings
 
 
 class TableLayer(nn.Module):
@@ -446,15 +501,19 @@ class TableLMSubPredictionHead(nn.Module):
     """
     only make prediction for a subset of candidates
     """
-    def __init__(self, config):
+    def __init__(self, config, output_dim=None, use_bias=True):
         super(TableLMSubPredictionHead, self).__init__()
-        self.transform = BertPredictionHeadTransform(config)
-
-        self.bias = nn.Embedding.from_pretrained(torch.zeros(config.ent_vocab_size, 1), freeze=False)
+        self.transform = BertPredictionHeadTransform(config, output_dim=output_dim)
+        if use_bias:
+            self.bias = nn.Embedding.from_pretrained(torch.zeros(config.ent_vocab_size, 1), freeze=False)
+        else:
+            self.bias = None
 
     def forward(self, hidden_states, candidates, candidates_embeddings, return_hidden=False):
         hidden_states = self.transform(hidden_states)
-        scores = torch.matmul(hidden_states, torch.transpose(candidates_embeddings,1,2)) + torch.transpose(self.bias(candidates),1,2)
+        scores = torch.matmul(hidden_states, torch.transpose(candidates_embeddings,1,2))
+        if self.bias is not None:
+            scores += torch.transpose(self.bias(candidates),1,2)
         if return_hidden:
             return (scores,hidden_states)
         else:
@@ -483,6 +542,21 @@ class TableMLMHead(nn.Module):
         ent_prediction_scores = self.ent_predictions(ent_sequence_output, ent_candidates, ent_candidates_embeddings)
         return tok_prediction_scores, ent_prediction_scores
 
+class TableELHead(nn.Module):
+    def __init__(self, config):
+        super(TableELHead, self).__init__()
+        if config.mode == 0:
+            self.ent_predictions = TableLMSubPredictionHead(config, output_dim=3*config.hidden_size, use_bias=False)
+        else:
+            self.ent_predictions = TableLMSubPredictionHead(config, output_dim=2*config.hidden_size, use_bias=False)
+
+    def load_pretrained(self, checkpoint, is_bert=False):
+        pass
+    
+    def forward(self, ent_sequence_output, ent_candidates_embeddings):
+        ent_prediction_scores = self.ent_predictions(ent_sequence_output, None, ent_candidates_embeddings)
+        return ent_prediction_scores
+
 class TableCERHead(nn.Module):
     def __init__(self, config):
         super(TableCERHead, self).__init__()
@@ -508,9 +582,9 @@ class TableHRHead(nn.Module):
         # an output-only bias for each token.
         self.decoder = nn.Linear(config.hidden_size,
                                  config.header_vocab_size,
-                                 bias=False)
+                                 bias=True)
 
-        self.bias = nn.Parameter(torch.zeros(config.header_vocab_size))
+        # self.bias = nn.Parameter(torch.zeros(config.header_vocab_size))
 
     def load_pretrained(self, checkpoint, is_bert=False):
         state_dict = self.state_dict()
@@ -526,7 +600,7 @@ class TableHRHead(nn.Module):
     
     def forward(self, hidden_states):
         hidden_states = self.transform(hidden_states)
-        hidden_states = self.decoder(hidden_states) + self.bias
+        hidden_states = self.decoder(hidden_states) #+ self.bias
         return hidden_states
 
 class TableModel(BertPreTrainedModel):
@@ -917,9 +991,11 @@ class HybridTableCER(BertPreTrainedModel):
 
     def forward(self, input_tok, input_tok_type, input_tok_pos, input_tok_mask,
                 input_ent, input_ent_tok, input_ent_tok_length, input_ent_type, input_ent_mask, ent_candidates,
-                seed_ent=None, target_ent=None):
+                seed_ent=None, target_ent=None, return_tok=False):
         # pdb.set_trace()
-        _, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent_tok, input_ent_tok_length, None, input_ent, input_ent_type, input_ent_mask, ent_candidates)
+        input_ent_mask_type = torch.zeros_like(input_ent)
+        input_ent_mask_type[:,1] = 3
+        tok_outputs, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent_tok, input_ent_tok_length, input_ent_mask_type, input_ent, input_ent_type, input_ent_mask, ent_candidates)
 
         ent_sequence_output = ent_outputs[0]
         if ent_candidates_embeddings is not None:
@@ -928,13 +1004,17 @@ class HybridTableCER(BertPreTrainedModel):
         if seed_ent is not None:
             ent_prediction_scores.scatter_add_(1, seed_ent, torch.full_like(seed_ent, -10000.0, dtype=torch.float))
         # Add hidden states and attention if they are here
-        ent_outputs = (ent_prediction_scores,) + ent_outputs
+        if ent_candidates_embeddings is not None:
+            ent_outputs = (ent_prediction_scores,) + ent_outputs
         # pdb.set_trace()
         if target_ent is not None:
             ent_CER_loss = self.loss_fct(ent_prediction_scores, target_ent)
             ent_outputs = (ent_CER_loss,) + ent_outputs
         # pdb.set_trace()
-        return ent_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
+        if return_tok:
+            return tok_outputs, ent_outputs
+        else:
+            return ent_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
 
 class HybridTableTR(BertPreTrainedModel):
     def __init__(self, config, is_simple=False):
@@ -1032,7 +1112,7 @@ class HybridTableCT(BertPreTrainedModel):
             tok_sequence_output = tok_outputs[0]
             tok_col_output = torch.matmul(column_header_mask, tok_sequence_output)
             tok_col_output /= column_header_mask.sum(dim=-1,keepdim=True)
-        if input_ent_tok is not None:
+        if input_ent_tok is not None or input_ent is not None:
             ent_sequence_output = ent_outputs[0]
             ent_col_output = torch.matmul(column_entity_mask, ent_sequence_output)
             ent_col_output /= column_entity_mask.sum(dim=-1,keepdim=True)
@@ -1044,6 +1124,8 @@ class HybridTableCT(BertPreTrainedModel):
                 logits = self.cls(tok_col_output)
         elif input_ent_tok is not None:
             logits = self.cls(ent_col_output)
+        elif input_ent is not None:
+            logits = self.cls(ent_col_output)
         else:
             raise Exception
         outputs = (logits,) + ent_outputs +tok_outputs
@@ -1054,16 +1136,115 @@ class HybridTableCT(BertPreTrainedModel):
         # pdb.set_trace()
         return outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
 
+class HybridTableRE(BertPreTrainedModel):
+    def __init__(self, config, is_simple=False):
+        super(HybridTableRE, self).__init__(config)
+
+        self.table = HybridTableModel(config, is_simple)
+        self.table.embeddings.ent_embeddings.weight.requires_grad = False
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        if config.mode in [0,3]:
+            self.cls = nn.Linear(4*config.hidden_size, config.class_num, bias=True)
+        else:
+            self.cls = nn.Linear(2*config.hidden_size, config.class_num, bias=True)
+
+        self.loss_fct = BCEWithLogitsLoss(reduction='none')
+
+        self.init_weights()
+
+    def load_pretrained(self, checkpoint):
+        self.table.load_pretrained(checkpoint,is_bert=False)
+
+    def forward(self, input_tok, input_tok_type, input_tok_pos, input_tok_mask,
+                input_ent_tok, input_ent_tok_length,
+                input_ent, input_ent_type, input_ent_mask,
+                column_entity_mask, column_header_mask, labels_mask, labels):
+        # pdb.set_trace()
+        tok_outputs, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent_tok, input_ent_tok_length, None, input_ent, input_ent_type, input_ent_mask, None)
+        if input_tok is not None:
+            tok_sequence_output = tok_outputs[0]
+            tok_col_output = torch.matmul(column_header_mask, tok_sequence_output)
+            tok_col_output /= column_header_mask.sum(dim=-1,keepdim=True)
+            tok_o_col_output = tok_col_output[:,1:,:]
+            tok_s_col_output = tok_col_output[:,:1,:].expand_as(tok_o_col_output)
+        if input_ent_tok is not None or input_ent is not None:
+            ent_sequence_output = ent_outputs[0]
+            ent_col_output = torch.matmul(column_entity_mask, ent_sequence_output)
+            ent_col_output /= column_entity_mask.sum(dim=-1,keepdim=True)
+            ent_o_col_output = ent_col_output[:,1:,:]
+            ent_s_col_output = ent_col_output[:,:1,:].expand_as(ent_o_col_output)
+        
+        if input_tok is not None:
+            if input_ent_tok is not None:
+                logits = self.cls(torch.cat([tok_s_col_output, ent_s_col_output, tok_o_col_output, ent_o_col_output], dim=-1))
+            else:
+                logits = self.cls(torch.cat([tok_s_col_output, tok_o_col_output], dim=-1))
+        elif input_ent_tok is not None:
+            logits = self.cls(torch.cat([ent_s_col_output, ent_o_col_output], dim=-1))
+        elif input_ent is not None:
+            logits = self.cls(torch.cat([ent_s_col_output, ent_o_col_output], dim=-1))
+        else:
+            raise Exception
+        outputs = (logits,) + ent_outputs +tok_outputs
+        if labels is not None:
+            RE_loss = self.loss_fct(logits, labels)
+            RE_loss = torch.sum(RE_loss.mean(dim=-1)*labels_mask)/labels_mask.sum()
+            outputs = (RE_loss,) + outputs
+        # pdb.set_trace()
+        return outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
+
+class BertRE(BertPreTrainedModel):
+    def __init__(self, config):
+        super(BertRE, self).__init__(config)
+        self.num_labels = config.num_labels
+
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
+
+        self.init_weights()
+
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None,
+                position_ids=None, head_mask=None, inputs_embeds=None, labels=None):
+
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            position_ids=position_ids,
+                            head_mask=head_mask,
+                            inputs_embeds=inputs_embeds)
+
+        pooled_output = outputs[1]
+
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
+
+        if labels is not None:
+            loss_fct = BCEWithLogitsLoss()
+            loss = loss_fct(logits.view(-1), labels.view(-1))
+            # if self.num_labels == 1:
+            #     #  We are doing regression
+            #     loss_fct = MSELoss()
+            #     loss = loss_fct(logits.view(-1), labels.view(-1))
+            # else:
+                # loss_fct = CrossEntropyLoss()
+                # loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), logits, (hidden_states), (attentions)
+
 class TableHeaderRanking(BertPreTrainedModel):
     def __init__(self, config, is_simple=False):
         super(TableHeaderRanking, self).__init__(config)
 
-        self.table = TableHeaderModel(config, is_simple)
+        self.table = HybridTableModel(config, is_simple)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.cls = TableHRHead(config)
-        self.cls.decoder.weight = self.table.embeddings.header_embeddings.weight
 
         self.loss_fct = MultiLabelSoftMarginLoss()
+        # self.loss_fct = BCEWithLogitsLoss()
 
         self.init_weights()
 
@@ -1071,14 +1252,12 @@ class TableHeaderRanking(BertPreTrainedModel):
         self.table.load_pretrained(checkpoint,is_bert=is_bert)
         self.cls.load_pretrained(checkpoint, is_bert=is_bert)
 
-    def forward(self, input_tok, input_tok_type, input_tok_pos,
-                input_header, input_header_type, input_mask,
-                seed_header=None, target_header=None):
+    def forward(self, input_tok, input_tok_type, input_tok_pos, input_mask, seed_header=None, target_header=None):
         # pdb.set_trace()
-        tok_outputs = self.table(input_tok, input_tok_type, input_tok_pos, input_header, input_header_type, input_mask)
+        tok_outputs, _, _ = self.table(input_tok, input_tok_type, input_tok_pos, input_mask, None, None, None, None, None, None, None)
 
         tok_sequence_output = tok_outputs[0]
-        header_prediction_scores = self.cls(tok_sequence_output[:,input_tok.shape[1],:])
+        header_prediction_scores = self.cls(tok_sequence_output[:,0,:])
 
         header_outputs = tok_outputs
 
@@ -1093,3 +1272,55 @@ class TableHeaderRanking(BertPreTrainedModel):
         # pdb.set_trace()
         return header_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
 
+class HybridTableEL(BertPreTrainedModel):
+    def __init__(self, config, is_simple=False):
+        super(HybridTableEL, self).__init__(config)
+
+        self.table = HybridTableModel(config, is_simple)
+        self.cand_embeddings = TableELEmbeddings(config)
+        self.cls = TableELHead(config)
+
+        self.init_weights()
+        self.cand_embeddings.word_embeddings = self.table.embeddings.word_embeddings
+
+    def get_output_embeddings(self):
+        return self.cls.tok_predictions.decoder
+    
+    def tie_weights(self):
+        """ Make sure we are sharing the input and output embeddings.
+            Export to TorchScript can't handle parameter sharing so we are cloning them instead.
+        """
+        pass
+
+    def load_pretrained(self, checkpoint, is_bert=False):
+        self.table.load_pretrained(checkpoint,is_bert=is_bert)
+        self.cls.load_pretrained(checkpoint,is_bert=is_bert)
+        self.cand_embeddings.word_embeddings = self.table.embeddings.word_embeddings
+
+    def forward(self, input_tok, input_tok_type, input_tok_pos, input_tok_mask,
+                input_ent_tok, input_ent_tok_length, input_ent_type, input_ent_mask,
+                cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length, cand_mask,
+                labels=None):
+        _, ent_outputs, _ = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent_tok, input_ent_tok_length, None, None, input_ent_type, input_ent_mask, None)
+        ent_candidates_embeddings = self.cand_embeddings(cand_name, cand_name_length,cand_description, cand_description_length,cand_type, cand_type_length)
+        ent_sequence_output = ent_outputs[0][:,1:]
+        ent_prediction_scores = self.cls(ent_sequence_output, ent_candidates_embeddings)
+
+        ent_prediction_scores += (cand_mask[:,None,:]==0).float()*-10000.0
+        ent_prediction_scores = ent_prediction_scores.view(-1, ent_prediction_scores.size(2))
+        ent_outputs = (ent_prediction_scores,) + ent_outputs[1:]
+
+        # Although this may seem awkward, BertForMaskedLM supports two scenarios:
+        # 1. If a tensor that contains the indices of masked labels is provided,
+        #    the cross-entropy is the MLM cross-entropy that measures the likelihood
+        #    of predictions for masked words.
+        # 2. If `lm_labels` is provided we are in a causal scenario where we
+        #    try to predict the next token for each input in the decoder.
+        # pdb.set_trace()
+        if labels is not None:
+            loss_fct = CrossEntropyLoss(ignore_index=-1)  # -1 index = padding token
+            
+            el_loss = loss_fct(ent_prediction_scores, labels.view(-1))
+            ent_outputs = (el_loss,) + ent_outputs
+        # pdb.set_trace()
+        return ent_outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)

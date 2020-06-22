@@ -4,14 +4,14 @@ import pdb
 import os
 from tqdm import tqdm
 
-def process_single_table(table, min_num=3):
+def process_single_table(table,all_entity_set, min_num=3):
     processed_data = {}
     core_entities = {}
 
     table_id = table.get("_id", "")
     pgTitle = table.get("pgTitle", "").lower()
     pgEnt = table.get("pgId", -1)
-    if pgEnt not in all_entities:
+    if pgEnt not in all_entity_set:
         pgEnt = -1
     secTitle = table.get("sectionTitle", "").lower()
     caption = table.get("tableCaption", "").lower()
@@ -19,19 +19,18 @@ def process_single_table(table, min_num=3):
     rows = table.get("tableData", {})
     entity_columns = table.get("entityColumn", [])
     entity_cells = np.array(table.get("entityCell",[[]]))
+    subject = table['subject_column']
 
     for i,j in zip(*entity_cells.nonzero()):
-        if j == 0:
+        if j == subject:
             e = rows[i][j]['surfaceLinks'][0]['target']['id']
-            if e in all_entities:
-                e_text = rows[i][j]['text']
-                if e != -1:
-                    core_entities[i] = [e, e_text]
+            if e in all_entity_set:
+                core_entities[i] = (e, rows[i][j]['text'])
     
     for i,j in zip(*entity_cells.nonzero()):
-        if j!=0 and i in core_entities:
+        if j!=subject and i in core_entities:
             e = rows[i][j]['surfaceLinks'][0]['target']['id']
-            if e in all_entities:
+            if e in all_entity_set:
                 if j not in processed_data:
                     processed_data[j] = []
                 processed_data[j].append([core_entities[i], e])
@@ -64,15 +63,15 @@ def load_entity_vocab(data_dir, ignore_bad_title=True, min_ent_count=1):
     return entity_vocab
 
 if __name__ == "__main__":
-    data_dir = "./data/wikisql_entity"
+    data_dir = "./data/wikitables_v2"
     entity_vocab = load_entity_vocab(data_dir,True, min_ent_count=2)
-    all_entities = set([entity_vocab[x]['wiki_id'] for x in entity_vocab])
+    all_entity_set = set([item['wiki_id'] for _,item in entity_vocab.items()])
     generated_data = []
-    with open(os.path.join(data_dir,"dev_tables.jsonl"), 'r') as f:
+    with open(os.path.join(data_dir,"test_tables.jsonl"), 'r') as f:
         for line in tqdm(f):
             table = json.loads(line.strip())
-            generated_data += process_single_table(table)
+            generated_data += process_single_table(table, all_entity_set)
     pdb.set_trace()
     print("get %d data samples in total"%len(generated_data))
-    with open(os.path.join(data_dir,"CF_dev_data.json"), 'w') as f:
+    with open(os.path.join(data_dir,"CF_test_data.json"), 'w') as f:
         json.dump(generated_data, f, indent=2)

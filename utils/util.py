@@ -111,3 +111,19 @@ def load_type_vocab(data_dir):
             index, t = line.strip().split('\t')
             type_vocab[t] = int(index)
     return type_vocab
+
+def load_relation_vocab(data_dir):
+    relation_vocab = {}
+    with open(os.path.join(data_dir, "relation_vocab.txt"), "r") as f:
+        for line in f:
+            index, t = line.strip().split('\t')
+            relation_vocab[t] = int(index)
+    return relation_vocab
+
+def load_dbpedia_type_vocab(data_dir):
+    type_vocab = {}
+    with open(os.path.join(data_dir, "dbpedia_type_vocab.txt"), "r") as f:
+        for line in f:
+            index, t = line.strip().split('\t')
+            type_vocab[t] = int(index)
+    return type_vocab

@@ -193,6 +193,14 @@ def train(args, config, train_dataset, model, eval_dataset = None):
                 input_tok_pos = None
                 input_tok_mask = None
                 input_ent = None
+            elif args.mode == 5:
+                input_ent_mask = input_ent_mask[:,:,input_tok_mask.shape[1]:]
+                input_tok = None
+                input_tok_type = None
+                input_tok_pos = None
+                input_tok_mask = None
+                input_ent_text = None
+                input_ent_text_length = None
             outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
                 input_ent_text, input_ent_text_length, input_ent, input_ent_type, input_ent_mask, column_entity_mask, column_header_mask, labels_mask, labels)
             # model outputs are always tuple in transformers (see doc)
@@ -325,6 +333,14 @@ def evaluate(args, config, eval_dataset, model, prefix=""):
             input_tok_pos = None
             input_tok_mask = None
             input_ent = None
+        elif args.mode == 5:
+            input_ent_mask = input_ent_mask[:,:,input_tok_mask.shape[1]:]
+            input_tok = None
+            input_tok_type = None
+            input_tok_pos = None
+            input_tok_mask = None
+            input_ent_text = None
+            input_ent_text_length = None
         with torch.no_grad():
             outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
                 input_ent_text, input_ent_text_length, input_ent, input_ent_type, input_ent_mask, column_entity_mask, column_header_mask, labels_mask, labels)
@@ -476,7 +492,7 @@ def main():
     config_class, model_class, _ = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           cache_dir=args.cache_dir if args.cache_dir else None)
-    type_vocab = load_type_vocab("./data/wikisql_entity")
+    type_vocab = load_type_vocab(args.data_dir)
     config.class_num = len(type_vocab)
     config.mode = args.mode
     model = model_class(config, is_simple=True)
@@ -497,9 +513,9 @@ def main():
     if args.do_train:
         if args.local_rank not in [-1, 0]:
             torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training process the dataset, and the others will use the cache
-        entity_vocab = load_entity_vocab("./data/wikisql_entity", ignore_bad_title=True, min_ent_count=2)
+        entity_vocab = load_entity_vocab(args.data_dir, ignore_bad_title=True, min_ent_count=2)
         # train_dataset = WikiCTDataset(args.data_dir, entity_vocab, type_vocab, max_input_tok=500, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None)
-        train_dataset = WikiCTDataset(args.data_dir, entity_vocab, type_vocab, max_input_tok=500, src="train_remove_dev", max_length = [50, 10, 10], force_new=False, tokenizer = None)
+        train_dataset = WikiCTDataset(args.data_dir, entity_vocab, type_vocab, max_input_tok=500, src="train", max_length = [50, 10, 10], force_new=False, tokenizer = None)
         eval_dataset = WikiCTDataset(args.data_dir, entity_vocab, type_vocab, max_input_tok=500, src="dev", max_length = [50, 10, 10], force_new=False, tokenizer = None)
         assert config.vocab_size == len(train_dataset.tokenizer), \
             "vocab size mismatch, vocab_size=%d"%(len(train_dataset.tokenizer))

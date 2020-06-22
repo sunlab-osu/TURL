@@ -46,8 +46,10 @@ from data_loader.header_data_loaders import *
 from model.configuration import TableConfig
 from model.model import TableHeaderRanking
 from model.transformers import BertTokenizer, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
+from model.optim import DenseSparseAdam
 from model.metric import *
 from utils.util import *
+import pdb
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +112,12 @@ def train(args, config, train_dataset, model, eval_dataset = None):
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.table.named_parameters() if not any(nd in n for nd in no_decay) and not 'header' in n], 'weight_decay': args.weight_decay, 'lr': args.learning_rate},
-            {'params': [p for n, p in model.table.named_parameters() if any(nd in n for nd in no_decay) and not 'header' in n], 'weight_decay': 0.0, 'lr': args.learning_rate},
-            {'params': [p for n, p in model.cls.transform.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay, 'lr': args.learning_rate},
-            {'params': [p for n, p in model.cls.transform.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': args.learning_rate},
-            {'params': [p for n, p in model.cls.named_parameters() if not any(nd in n for nd in no_decay) and not 'transform' in n], 'weight_decay': args.weight_decay, 'lr': args.learning_rate*5},
-            {'params': [p for n, p in model.cls.named_parameters() if any(nd in n for nd in no_decay) and not 'transform' in n], 'weight_decay': 0.0, 'lr': args.learning_rate*5}
+            {'params': [p for n, p in model.table.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay, 'lr': args.learning_rate},
+            {'params': [p for n, p in model.table.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': args.learning_rate},
+            {'params': [p for n, p in model.cls.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay, 'lr': args.learning_rate*2},
+            {'params': [p for n, p in model.cls.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': args.learning_rate*2}
             ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    optimizer = DenseSparseAdam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
     if args.fp16:
         try:
@@ -157,20 +157,17 @@ def train(args, config, train_dataset, model, eval_dataset = None):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
             _,input_tok, input_tok_type, input_tok_pos, \
-                input_header, input_header_type, \
                 input_mask, seed_header, target_header = batch
             input_tok = input_tok.to(args.device)
             input_tok_type = input_tok_type.to(args.device)
             input_tok_pos = input_tok_pos.to(args.device)
-            input_header = input_header.to(args.device)
-            input_header_type = input_header_type.to(args.device)
             input_mask = input_mask.to(args.device)
             seed_header = seed_header.to(args.device)
             target_header = target_header.to(args.device)
             model.train()
             # pdb.set_trace()
             header_outputs = model(input_tok, input_tok_type, input_tok_pos,
-                            input_header, input_header_type, input_mask,
+                            input_mask,
                             seed_header, target_header)
             # model outputs are always tuple in transformers (see doc)
             header_loss = header_outputs[0]
@@ -267,20 +264,17 @@ def evaluate(args, config, eval_dataset, model, prefix=""):
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         _,input_tok, input_tok_type, input_tok_pos, \
-                input_header, input_header_type, \
                 input_mask, seed_header, target_header = batch
         input_tok = input_tok.to(args.device)
         input_tok_type = input_tok_type.to(args.device)
         input_tok_pos = input_tok_pos.to(args.device)
-        input_header = input_header.to(args.device)
-        input_header_type = input_header_type.to(args.device)
         input_mask = input_mask.to(args.device)
         seed_header = seed_header.to(args.device)
         target_header = target_header.to(args.device)
         # pdb.set_trace()
         with torch.no_grad():
             header_outputs = model(input_tok, input_tok_type, input_tok_pos,
-                            input_header, input_header_type, input_mask,
+                            input_mask,
                             seed_header, target_header)
             header_loss = header_outputs[0]
             header_prediction_scores = header_outputs[1]
@@ -459,9 +453,9 @@ def main():
     if args.do_train:
         lm_checkpoint = torch.load(os.path.join(args.model_name_or_path,"pytorch_model.bin"))
         model.load_pretrained(lm_checkpoint, args.is_bert)
-        origin_header_embeddings = model.table.embeddings.header_embeddings.weight.data.numpy()
+        origin_header_embeddings = model.cls.decoder.weight.data.numpy()
         new_header_embeddings = create_header_embedding(args.data_dir, train_dataset.header_vocab, origin_header_embeddings, args.is_bert)
-        model.table.embeddings.header_embeddings.weight.data = torch.FloatTensor(new_header_embeddings)
+        model.cls.decoder.weight.data = torch.FloatTensor(new_header_embeddings)
         model.to(args.device)
 
     if args.local_rank == 0:
