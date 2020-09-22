@@ -1,5 +1,5 @@
 # TURL
-This Repo contains coda and data for "TURL: Table Understanding through Representation Learning". 
+This Repo contains code and data for "TURL: Table Understanding through Representation Learning". 
 
 *We are cleaning and refactoring the code and will push the official release together with data and detailed documentation once that is done.*
 
