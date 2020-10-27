@@ -12,8 +12,6 @@ In the *_tables.jsonl file, each line represents a Wikipedia table. Table conten
 
 There is also an entity_vocab.txt file contains all the entities we used in all experiments (these are the entities shown in pretraining). Each line contains vocab_id, Wikipedia_id, Wikipedia_title, freebase_mid, count of an entity.
 
-For entity linking:
-You can just use the raw split, as the linked entity to each cell is the target for entity linking. For the WikiGS corpus, please find the original release here http://www.cs.toronto.edu/~oktie/webtables/
 
 For column type annotation:
 There is a type_vocab.txt store the target types. In the *.table_col_type.json file, each example contains “table_id, pgTitle, pgEnt(Wikipedia id), secTitle, caption, headers, entities, type_annotations”
@@ -30,9 +28,40 @@ TODO: Instruction for preparing code from original WikiTable Corpus
 ## Pretraining
 TODO
 
-## Evaluation
+## Finetuning & Evaluation
 To systematically evaluate our pre-trained framework as well as facilitate research, we compile a table understanding benchmark consisting of 6 widely studied tasks covering
 table interpretation (e.g., entity linking, column type annotation, relation extraction) and table augmentation (e.g., row population, cell filling, schema augmentation).
+
+### Entity Linking
+We use two datasets for evaluation in entity linking. One is based on our train/dev/test split, the linked entity to each cell is the target for entity linking. For the WikiGS corpus, please find the original release here http://www.cs.toronto.edu/~oktie/webtables/ .
+
+We use entity name, together with entity description and entity type to get KB entity representation for entity linking. There are three variants for the entity linking: **0: name + description + type**, **1: name + type**, **2: name + description**.
+
+**Evaluation**
+
+Please see **EL** in `evaluate_task.ipynb`
+
+**Data**
+
+Data are stored in *[split].table_entity_linking.json*
+```
+'23235546-1', # table id
+'Ivan Lendl career statistics', # page title
+'Singles: 19 finals (8 titles, 11 runner-ups)', # section title
+'', # caption
+['outcome', 'year', ...], # headers
+[[[0, 4], 'Björn Borg'], [[9, 2], 'Wimbledon'], ...], # cells, [index, entity mention (cell text)]
+[['Björn Borg', 'Swedish tennis player', []], ['Björn Borg', 'Swedish swimmer', ['Swimmer']], ...], # candidate entities, this the merged set for all cells. [entity name, entity description, entity types]
+[0, 12, ...] # labels, this is the index of the gold entity in the candidate entities
+[[0, 1, ...], [11, 12, 13, ...], ...] # candidates for each cell
+```
+
+### Column Type Annotation
+We divide the information available in the table for column type annotation as: entity mention, table metadata and entity embedding. We experiment under 6 settings: **0**
+### Relation Extraction
+### Row Population
+### Cell Filling
+### Schema Augmentation
 
 TODO: Refactoring the evaluation scripts and add instruction.
 
