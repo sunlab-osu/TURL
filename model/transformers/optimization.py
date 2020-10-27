@@ -50,8 +50,18 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
         return max(0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps)))
-
-    return LambdaLR(optimizer, lr_lambda, last_epoch)
+    def bert_lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return 0.0
+        return max(0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps)))
+    if len(optimizer.param_groups)==1:
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
+    elif len(optimizer.param_groups)==2:
+        return LambdaLR(optimizer, [bert_lr_lambda, lr_lambda], last_epoch)
+    elif len(optimizer.param_groups)==4:
+        return LambdaLR(optimizer, [bert_lr_lambda, bert_lr_lambda, lr_lambda, lr_lambda], last_epoch)
+    else:
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
 def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, num_cycles=.5, last_epoch=-1):

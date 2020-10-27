@@ -242,7 +242,7 @@ class finetune_collate_fn_CT:
             batch_column_header_mask_padded[i, :col_num, :tok_l] = batch_column_header_mask[i]
             batch_column_header_mask_padded[i, col_num:, 0] = 1
             batch_labels_padded[i, :col_num] = batch_labels[i]
-            batch_labels_mask[i, :col_num] = 1
+            batch_labels_mask[i, :col_num] = batch_labels[i].sum(1)!=0
                     
         batch_input_tok_padded = torch.LongTensor(batch_input_tok_padded)
         batch_input_tok_type_padded = torch.LongTensor(batch_input_tok_type_padded)

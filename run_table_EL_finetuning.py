@@ -184,7 +184,7 @@ def train(args, config, train_dataset, model, eval_dataset = None):
             elif args.mode == 2:
                 cand_type = None
                 cand_type_length = None
-            else:
+            elif args.mode != 0:
                 raise Exception
             outputs = model(input_tok, input_tok_type, input_tok_pos, input_tok_mask,\
                 input_ent_text, input_ent_text_length, input_ent_type, input_ent_mask, \

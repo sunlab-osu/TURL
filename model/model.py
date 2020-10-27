@@ -147,8 +147,8 @@ class TableHybridEmbeddings(nn.Module):
     """
     def __init__(self, config):
         super(TableHybridEmbeddings, self).__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0,sparse=True)
-        self.ent_embeddings = nn.Embedding(config.ent_vocab_size, config.hidden_size, padding_idx=0,sparse=True)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0,sparse=False)
+        self.ent_embeddings = nn.Embedding(config.ent_vocab_size, config.hidden_size, padding_idx=0,sparse=False)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
         self.ent_mask_embedding = nn.Embedding(4, config.hidden_size, padding_idx=0)
@@ -1095,7 +1095,8 @@ class HybridTableCT(BertPreTrainedModel):
         else:
             self.cls = nn.Linear(config.hidden_size, config.class_num, bias=True)
 
-        self.loss_fct = BCEWithLogitsLoss(reduction='none')
+        # self.loss_fct = BCEWithLogitsLoss(reduction='none')
+        self.loss_fct = CrossEntropyLoss(ignore_index=-1)
 
         self.init_weights()
 
@@ -1109,14 +1110,13 @@ class HybridTableCT(BertPreTrainedModel):
         # pdb.set_trace()
         tok_outputs, ent_outputs, ent_candidates_embeddings = self.table(input_tok, input_tok_type, input_tok_pos, input_tok_mask, input_ent_tok, input_ent_tok_length, None, input_ent, input_ent_type, input_ent_mask, None)
         if input_tok is not None:
-            tok_sequence_output = tok_outputs[0]
+            tok_sequence_output = self.dropout(tok_outputs[0])
             tok_col_output = torch.matmul(column_header_mask, tok_sequence_output)
-            tok_col_output /= column_header_mask.sum(dim=-1,keepdim=True)
+            tok_col_output /= column_header_mask.sum(dim=-1,keepdim=True).clamp(1.0,9999.0)
         if input_ent_tok is not None or input_ent is not None:
-            ent_sequence_output = ent_outputs[0]
+            ent_sequence_output = self.dropout(ent_outputs[0])
             ent_col_output = torch.matmul(column_entity_mask, ent_sequence_output)
-            ent_col_output /= column_entity_mask.sum(dim=-1,keepdim=True)
-        
+            ent_col_output /= column_entity_mask.sum(dim=-1,keepdim=True).clamp(1.0,9999.0)
         if input_tok is not None:
             if input_ent_tok is not None:
                 logits = self.cls(torch.cat([tok_col_output, ent_col_output], dim=-1))
@@ -1130,8 +1130,9 @@ class HybridTableCT(BertPreTrainedModel):
             raise Exception
         outputs = (logits,) + ent_outputs +tok_outputs
         if labels is not None:
-            CT_loss = self.loss_fct(logits, labels)
-            CT_loss = torch.sum(CT_loss.mean(dim=-1)*labels_mask)/labels_mask.sum()
+            # CT_loss = self.loss_fct(logits, labels)
+            # CT_loss = torch.sum(CT_loss.mean(dim=-1)*labels_mask)/labels_mask.sum()
+            CT_loss = self.loss_fct(logits.view(-1,logits.shape[-1]), (labels.argmax(-1)*labels_mask+(labels_mask-1)).long().view(-1))
             outputs = (CT_loss,) + outputs
         # pdb.set_trace()
         return outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
