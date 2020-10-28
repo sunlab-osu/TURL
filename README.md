@@ -57,7 +57,27 @@ Data are stored in *[split].table_entity_linking.json*
 ```
 
 ### Column Type Annotation
-We divide the information available in the table for column type annotation as: entity mention, table metadata and entity embedding. We experiment under 6 settings: **0**
+We divide the information available in the table for column type annotation as: entity mention, table metadata and entity embedding. We experiment under 6 settings: **0: all information**, **1: only entity related**, **2: only table metadata**, **3: no entity embedding**, **4: only entity mention**, **5: only entity embedding**.
+
+**Data**
+
+Data are stored in *[split].table_col_type.json*
+```
+'27295818-29', # table id
+ '2010–11 rangers f.c. season', # page title
+ 27295818, # Wikipedia page id
+ 'overall', # section title
+ '', # caption
+ ['competition', 'started round', 'final position / round'], # headers
+ [[[[0, 0], [26980923, 'Scottish Premier League']],
+   [[1, 0], [18255941, 'UEFA Champions League']],
+   ...],
+  ...,
+  [[[1, 2], [18255941, 'Group stage']],
+   [[2, 2], [20795986, 'Round of 16']],
+   ...]], # cells, [index, [entity id, entity mention (cell text)]]
+ [['time.event'], ..., ['time.event']] # column type annotations, a column may have multiple types.
+```
 ### Relation Extraction
 ### Row Population
 ### Cell Filling
