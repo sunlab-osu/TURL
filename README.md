@@ -8,7 +8,7 @@ Link for processed pretraining and evaluation data (https://osu.box.com/s/qqpdn4
 
 These are the processed raw tables we used for pre-training and creation of all test datasets, with 570171 / 5036 / 4964 tables for training/validation/testing. For row population only a small amount of tables is further filtered out which results in the final 4132 tables for testing.
 
-In the *_tables.jsonl file, each line represents a Wikipedia table. Table content is stored in the field “tableData”, where the “target” is the actual entity links to the cell, and is also the entity to retrieve. The “id” and “title” are the Wikipedia_id and Wikipedia_title of the entity. “entityCell” and “entityColumn” shows the cells and columns that pass our filtering and are identified to contain entity information. For row population, the task is to predict the entities linked to the entity cells in the leftmost entity column.
+In the *[split]_tables.jsonl* file, each line represents a Wikipedia table. Table content is stored in the field “tableData”, where the “target” is the actual entity links to the cell, and is also the entity to retrieve. The “id” and “title” are the Wikipedia_id and Wikipedia_title of the entity. “entityCell” and “entityColumn” shows the cells and columns that pass our filtering and are identified to contain entity information. For row population, the task is to predict the entities linked to the entity cells in the leftmost entity column.
 
 There is also an entity_vocab.txt file contains all the entities we used in all experiments (these are the entities shown in pretraining). Each line contains vocab_id, Wikipedia_id, Wikipedia_title, freebase_mid, count of an entity.
 
@@ -26,7 +26,39 @@ TODO: We will update with more instructions later, but you can try these data fi
 TODO: Instruction for preparing code from original WikiTable Corpus
 
 ## Pretraining
-TODO
+**Data**
+
+The *[split]_tables.jsonl* files are used for pretraining.
+```
+'_id': '27289759-6', # table id
+'pgTitle': '2010 Santos FC season', # page title
+'sectionTitle': 'Out', # section title
+'tableCaption': '', # table caption
+'pgId': 27289759, # wikipedia page id
+'tableId': 6, # index of the table in the wikipedia page
+'tableData': [[{'text': 'DF', # cell value
+    'surfaceLinks': [{'surface': 'DF',
+      'locType': 'MAIN_TABLE',
+      'target': {'id': 649702,
+       'language': 'en',
+       'title': 'Defender_(association_football)'},
+      'linkType': 'INTERNAL'}] # urls in the cell
+      } # one for each cell,...]
+      ...]
+'tableHeaders': [['Pos.', 'Name', 'Moving to', 'Type', 'Source']], # row headers
+'processed_tableHeaders': ['pos.', 'name', 'moving to', 'type', 'source'], # processed headers that will be used
+'merged_row': [], # merged rows, we identify them by comparing the cell values
+'entityCell': [[1, 1, 1, 0, 0],...], # whether the cell is an entity cell, get by checking the urls inside
+'entityColumn': [0, 1, 2], # whether the column is an entity column
+'column_type': [0, 0, 0, 4, 2], # more finegrained column type for debug, here we only use 0: entity columns
+'unique': [0.16, 1.0, 0.75, 0, 0], # the ratio of unique entities in that column
+'entity_count': 72, # total number of entities in the table
+'subject_column': 1 # the column index of the subject column
+```
+
+**Get representation for a given table**
+To use the pretrained model as a table encoder, use the `HybridTableMaskedLM` model class. There is a example in `evaluate_task.ipynb` for cell filling task, which also shows how to get representation for arbitrary table.
+
 
 ## Finetuning & Evaluation
 To systematically evaluate our pre-trained framework as well as facilitate research, we compile a table understanding benchmark consisting of 6 widely studied tasks covering

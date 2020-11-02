@@ -950,8 +950,8 @@ class HybridTableMaskedLM(BertPreTrainedModel):
         ent_sequence_output = ent_outputs[0]
         tok_prediction_scores, ent_prediction_scores = self.cls(tok_sequence_output, ent_sequence_output, ent_candidates, ent_candidates_embeddings)
 
-        tok_outputs = (tok_prediction_scores,) + tok_outputs[1:]  # Add hidden states and attention if they are here
-        ent_outputs = (ent_prediction_scores,) + ent_outputs[1:]
+        tok_outputs = (tok_prediction_scores,) + tok_outputs  # Add hidden states and attention if they are here
+        ent_outputs = (ent_prediction_scores,) + ent_outputs
 
         # Although this may seem awkward, BertForMaskedLM supports two scenarios:
         # 1. If a tensor that contains the indices of masked labels is provided,
