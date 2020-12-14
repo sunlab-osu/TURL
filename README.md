@@ -1,29 +1,25 @@
 # TURL
 This Repo contains code and data for "TURL: Table Understanding through Representation Learning". 
 
-*We are cleaning and refactoring the code and will push the official release together with data and detailed documentation once that is done.*
-
 ![overview_0](https://drive.google.com/uc?id=13PvUgWftKf8AsbjMKIdrHydUQ7K1VKME)
 
-  * [Environment and Setup](#environment-and-setup)
-  * [Data](#data)
-  * [Pretraining](#pretraining)
-  * [Finetuning & Evaluation](#finetuning---evaluation)
-    + [Entity Linking](#entity-linking)
-    + [Column Type Annotation](#column-type-annotation)
-    + [Relation Extraction](#relation-extraction)
-    + [Row Population](#row-population)
-    + [Cell Filling](#cell-filling)
-    + [Schema Augmentation](#schema-augmentation)
-  * [Acknowledgement](#acknowledgement)
+* [Environment and Setup](#environment-and-setup)
+* [Data](#data)
+* [Pretraining](#pretraining)
+* [Finetuning & Evaluation](#finetuning---evaluation)
+ + [Entity Linking](#entity-linking)
+ + [Column Type Annotation](#column-type-annotation)
+ + [Relation Extraction](#relation-extraction)
+ + [Row Population](#row-population)
+ + [Cell Filling](#cell-filling)
+ + [Schema Augmentation](#schema-augmentation)
+* [Acknowledgement](#acknowledgement)
 
 ## Environment and Setup
 The model is mainly developped using [PyTorch](https://pytorch.org/) and [Transformers](https://huggingface.co/transformers/). You can access the docker image we used here `docker pull xdeng/transformers:latest`
 
 ## Data
 Link for processed pretraining and evaluation data, as well as the model checkpoints can be accessed [here](https://osu.box.com/s/qqpdn4hbgjaiw2twn58aikqsxtxrwi2t). This is created based on the original WikiTables corpus (http://websail-fe.cs.northwestern.edu/TabEL/)
-
-TODO: We will update with more instructions later, but you can try these data first.
 
 TODO: Instruction for preparing code from original WikiTable Corpus
 
