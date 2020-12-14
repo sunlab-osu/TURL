@@ -7,12 +7,12 @@ This Repo contains code and data for "TURL: Table Understanding through Represen
 * [Data](#data)
 * [Pretraining](#pretraining)
 * [Finetuning & Evaluation](#finetuning---evaluation)
- + [Entity Linking](#entity-linking)
- + [Column Type Annotation](#column-type-annotation)
- + [Relation Extraction](#relation-extraction)
- + [Row Population](#row-population)
- + [Cell Filling](#cell-filling)
- + [Schema Augmentation](#schema-augmentation)
+  + [Entity Linking](#entity-linking)
+  + [Column Type Annotation](#column-type-annotation)
+  + [Relation Extraction](#relation-extraction)
+  + [Row Population](#row-population)
+  + [Cell Filling](#cell-filling)
+  + [Schema Augmentation](#schema-augmentation)
 * [Acknowledgement](#acknowledgement)
 
 ## Environment and Setup
