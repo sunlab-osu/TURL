@@ -66,6 +66,8 @@ To use the pretrained model as a table encoder, use the `HybridTableMaskedLM` mo
 To systematically evaluate our pre-trained framework as well as facilitate research, we compile a table understanding benchmark consisting of 6 widely studied tasks covering
 table interpretation (e.g., entity linking, column type annotation, relation extraction) and table augmentation (e.g., row population, cell filling, schema augmentation).
 
+Please see `evaluate_task.ipynb` for running evaluation for different tasks.
+
 <p align="center"><img src="https://drive.google.com/uc?id=1Js4inKqjEYR0yLNFV9NR0g2JYGhFr4qe" width="50%" /></p>
 
 ### Entity Linking
@@ -119,6 +121,11 @@ There is a *relation_vocab.txt* store the target relations. In the *[split].tabl
 ### Row Population
 For row population, the task is to predict the entities linked to the entity cells in the leftmost entity column. A small amount of tables is further filtered out from *test_tables.jsonl* which results in the final 4132 tables for testing.
 ### Cell Filling
+Please see **Pretrained and CF** in `evaluate_task.ipynb`. You can directly load the checkpoint under *pretrained*, as we do not finetune the model for cell filling.
+
+We have three baselines for cell filling: **Exact**, **H2H**, **H2V**. The header vectors and co-occurrence statistics are pre-computed, please see *baselines/cell_filling/cell_filling.py* for details.
+
+
 ### Schema Augmentation
 
 TODO: Refactoring the evaluation scripts and add instruction.

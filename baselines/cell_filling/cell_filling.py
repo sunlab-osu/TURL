@@ -67,7 +67,6 @@ class cell_filling(object):
     
     def rank_cand_h2h(self, h, cands):
         cand_h_scores = []
-        # h_seen = h in self.header_vectors.vocab
         h_seen = h in self.n_h2h
         for e in cands:
             tmp = []
@@ -80,7 +79,6 @@ class cell_filling(object):
                     tmp.append(-1)
                 else:
                     try:
-                        # tmp.append(self.header_vectors.similarity(h, z))
                         tmp.append(self.n_h2h[h][z])
                     except:
                         tmp.append(-1)
@@ -92,7 +90,6 @@ class cell_filling(object):
     def rank_cand_h2v(self, h, cands):
         cand_h_scores = []
         h_seen = h in self.header_vectors.vocab
-        # h_seen = h in self.n_h2h
         for e in cands:
             tmp = []
             for z in cands[e][0]:
@@ -105,7 +102,6 @@ class cell_filling(object):
                 else:
                     try:
                         tmp.append(self.header_vectors.similarity(h, z))
-                        # tmp.append(self.n_h2h[h][z])
                     except:
                         tmp.append(-1)
             score = max(tmp)
