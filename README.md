@@ -81,7 +81,7 @@ Please see **EL** in `evaluate_task.ipynb`
 
 **Data**
 
-Data are stored in *[split].table_entity_linking.json*
+Data are stored in *[split].table_entity_linking.json*, note this only contains those examples with groundtruth in the candidate set, not including empty candidate sets or all wrong examples.
 ```
 '23235546-1', # table id
 'Ivan Lendl career statistics', # page title
@@ -93,6 +93,8 @@ Data are stored in *[split].table_entity_linking.json*
 [0, 12, ...] # labels, this is the index of the gold entity in the candidate entities
 [[0, 1, ...], [11, 12, 13, ...], ...] # candidates for each cell
 ```
+
+This will rerank the candidates with TURL. For candidate generation and full evaluation please check the notebook in `baselines/entity_linking`.
 
 ### Column Type Annotation
 We divide the information available in the table for column type annotation as: entity mention, table metadata and entity embedding. We experiment under 6 settings: **0: all information**, **1: only entity related**, **2: only table metadata**, **3: no entity embedding**, **4: only entity mention**, **5: only entity embedding**.
