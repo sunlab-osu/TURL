@@ -1,5 +1,18 @@
 # TURL
-This Repo contains code and data for "TURL: Table Understanding through Representation Learning". 
+This Repo contains code and data for [Deng, Xiang, et al. "TURL: table understanding through representation learning." Proceedings of the VLDB Endowment 14.3 (2020): 307-319.](http://www.vldb.org/pvldb/vol14/p307-deng.pdf) If you plan to use TURL in your project, please consider citing the following paper:
+
+```
+@article{deng2020turl,
+  title={TURL: table understanding through representation learning},
+  author={Deng, Xiang and Sun, Huan and Lees, Alyssa and Wu, You and Yu, Cong},
+  journal={Proceedings of the VLDB Endowment},
+  volume={14},
+  number={3},
+  pages={307--319},
+  year={2020},
+  publisher={VLDB Endowment}
+}
+```
 
 ![overview_0](https://drive.google.com/uc?id=13PvUgWftKf8AsbjMKIdrHydUQ7K1VKME)
 
