@@ -10,7 +10,7 @@ import numpy as np
 import json
 import os
 from tqdm import tqdm
-from torch._six import container_abcs, string_classes, int_classes, FileNotFoundError
+from torch._six import string_classes
 import re
 import random
 import copy
