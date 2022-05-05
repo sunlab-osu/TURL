@@ -110,6 +110,8 @@ Data are stored in *[split].table_entity_linking.json*, note this only contains 
 This will rerank the candidates with TURL. For candidate generation and full evaluation please check the notebook in `baselines/entity_linking`.
 
 ### Column Type Annotation
+*We updated the CT model so now it is mutli-label classification by default and uses BCE loss which is consistent with our own dataset. If you are testing with datasets that assumes each column has single label, you can still use CrossEntropy loss. Change Line 1098 and Line 1033 in model/model.py*
+
 We divide the information available in the table for column type annotation as: entity mention, table metadata and entity embedding. We experiment under 6 settings: **0: all information**, **1: only entity related**, **2: only table metadata**, **3: no entity embedding**, **4: only entity mention**, **5: only entity embedding**.
 
 **Data**
