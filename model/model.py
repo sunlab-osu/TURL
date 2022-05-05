@@ -1095,8 +1095,8 @@ class HybridTableCT(BertPreTrainedModel):
         else:
             self.cls = nn.Linear(config.hidden_size, config.class_num, bias=True)
 
-        # self.loss_fct = BCEWithLogitsLoss(reduction='none')
-        self.loss_fct = CrossEntropyLoss(ignore_index=-1)
+        self.loss_fct = BCEWithLogitsLoss(reduction='none')
+        # self.loss_fct = CrossEntropyLoss(ignore_index=-1)
 
         self.init_weights()
 
@@ -1130,9 +1130,9 @@ class HybridTableCT(BertPreTrainedModel):
             raise Exception
         outputs = (logits,) + ent_outputs +tok_outputs
         if labels is not None:
-            # CT_loss = self.loss_fct(logits, labels)
-            # CT_loss = torch.sum(CT_loss.mean(dim=-1)*labels_mask)/labels_mask.sum()
-            CT_loss = self.loss_fct(logits.view(-1,logits.shape[-1]), (labels.argmax(-1)*labels_mask+(labels_mask-1)).long().view(-1))
+            CT_loss = self.loss_fct(logits, labels)
+            CT_loss = torch.sum(CT_loss.mean(dim=-1)*labels_mask)/labels_mask.sum()
+            # CT_loss = self.loss_fct(logits.view(-1,logits.shape[-1]), (labels.argmax(-1)*labels_mask+(labels_mask-1)).long().view(-1))
             outputs = (CT_loss,) + outputs
         # pdb.set_trace()
         return outputs  # (masked_lm_loss), (ltr_lm_loss), prediction_scores, (hidden_states), (attentions)
