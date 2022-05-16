@@ -34,8 +34,6 @@ The model is mainly developped using [PyTorch](https://pytorch.org/) and [Transf
 ## Data
 Link for processed pretraining and evaluation data, as well as the model checkpoints can be accessed [here](https://osu.box.com/s/qqpdn4hbgjaiw2twn58aikqsxtxrwi2t). This is created based on the original WikiTables corpus (http://websail-fe.cs.northwestern.edu/TabEL/)
 
-TODO: Instruction for preparing code from original WikiTable Corpus
-
 ## Pretraining
 **Data**
 
@@ -144,13 +142,10 @@ We have three baselines for cell filling: **Exact**, **H2H**, **H2V**. The heade
 
 
 ### Schema Augmentation
-
-TODO: Refactoring the evaluation scripts and add instruction.
+For schema augmentation, the task to populate the headers given caption and optional seed headers. We take this as a ranking problem given set of candidate headers constructed from the training data. Please see **Attribute Recommendation** in `evaluate_task.ipynb`.
 
 ## Acknowledgement
 We use the [WikiTable corpus](http://websail-fe.cs.northwestern.edu/TabEL/) for developing the dataset for pretraining and most of the evaluation. 
 We also adopt the [WikiGS](http://www.cs.toronto.edu/~oktie/webtables/) for evaluation of entity linking.
 
 We use multiple existing systems as baseline for evaluation. We took the code released by the author and made minor changes to fit our setting, please refer to the paper for more details. 
-
-
