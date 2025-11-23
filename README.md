@@ -32,6 +32,8 @@ This Repo contains code and data for [Deng, Xiang, et al. "TURL: table understan
 The model is mainly developped using [PyTorch](https://pytorch.org/) and [Transformers](https://huggingface.co/transformers/). You can access the docker image we used here `docker pull xdeng/transformers:latest`
 
 ## Data
+**Update 11/22/2025: Unfortunately new policy from OSU revoked onedrive access and data for students who have graduated. The old link no longer works. I am trying to find a backup but in the meantime if anyone has downloaded the data before, would appreciate if you can make a PR of a valid link or contact me!**
+
 Link for processed pretraining and evaluation data, as well as the model checkpoints can be accessed [here](https://buckeyemailosu-my.sharepoint.com/:f:/g/personal/deng_595_buckeyemail_osu_edu/EjZWRtslWX9CubQ92jlmNTgB74hxxXszy9BUaXG5OL5F-g?e=HN2qtD). This is created based on the original WikiTables corpus (http://websail-fe.cs.northwestern.edu/TabEL/)
 
 ## Pretraining
